@@ -2,6 +2,15 @@ using LinearAlgebra
 using Plots
 using ParallelStencil
 
+const USE_GPU = false
+
+@static if USE_GPU
+    @init_parallel_stencil(CUDA, Float64, 3, inbounds=true)
+else
+    @init_parallel_stencil(Threads, Float64, 3, inbounds=true)
+end
+
+
 const method = :D3Q19
 
 @static if method == :D3Q15
@@ -47,27 +56,33 @@ end
 # Speed of sound (in lattice units)
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
-
+# @parallel_indices (i, j, k) function collision!(pop, velocity, values, _τ)
+#     v = velocity[i, j, k, :]
+#     for q in 1:Q
+#         pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i, j, k])
+#     end
+#     return
+# end
 @views function collision!(pop, velocity, values, _τ)
-    for i in axes(pop, 1)[2:end]
-        for j in axes(pop, 2)[2:end]
-            for k in axes(pop, 3)[2:end]
-                v = velocity[i, j, k, :]
+    for i in axes(pop, 1)[2:end-1]
+        for j in axes(pop, 2)[2:end-1]
+            for k in axes(pop, 3)[2:end-1]
+                v = velocity[i-1, j-1, k-1, :]
                 for q in 1:Q
-                    pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i, j, k])
+                    pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i-1, j-1, k-1])
                 end
             end
         end
     end
 end
 
-@views function dirichlet_boundary(boundary, pop, velocity, values)
+@views function dirichlet_boundary!(boundary, pop, velocity, values)
     if boundary == :xupper
         x = size(pop, 1)
         for j in axes(pop, 2)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[x, j, k, q] = f_eq(q, velocity, values[x, j, k])
+                    pop[x, j, k, q] = f_eq(q, velocity, values[x, j, k])
                 end      
             end               
         end
@@ -76,7 +91,7 @@ end
         for i in axes(pop, 1)[2:end-1]
             for j in axes(pop, 2)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[i, j, z] = f_eq(q, velocity, values[i, j, z])
+                    pop[i, j, z] = f_eq(q, velocity, values[i, j, z])
                 end
             end
         end
@@ -85,7 +100,7 @@ end
         for i in axes(pop, 1)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[i, y, k, q] = f_eq(q, velocity, values[i, y, k])
+                    pop[i, y, k, q] = f_eq(q, velocity, values[i, y, k])
                 end      
             end      
         end
@@ -94,7 +109,7 @@ end
         for i in axes(pop, 1)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[i, y, k, q] = f_eq(q, velocity, values[i, y, k])
+                    pop[i, y, k, q] = f_eq(q, velocity, values[i, y, k])
                 end      
             end           
         end
@@ -103,7 +118,7 @@ end
         for j in axes(pop, 2)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[x, j, k, q] = f_eq(q, velocity, values[x, j, k])
+                    pop[x, j, k, q] = f_eq(q, velocity, values[x, j, k])
                 end      
             end      
         end
@@ -112,72 +127,51 @@ end
         for i in axes(pop, 1)[2:end-1]
             for j in axes(pop, 2)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[i, j, z] = f_eq(q, velocity, values[i, j, z])
+                    pop[i, j, z] = f_eq(q, velocity, values[i, j, z])
                 end
             end
         end
     end
 end
 
-@views function periodic_boundary_conditions(dimension, pop, pop_buf)
+@views function periodic_boundary_update!(dimension, pop, pop_buf)
     if dimension == :x
         Nx = size(pop, 1)
-        for j in axes(pop, 2)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
+        for j in axes(pop, 2)
+            for k in axes(pop, 3)
                 for q in 1:Q
-                    for i in [1, Nx]
-                        xidx = i - directions[q][1]
-                        if xidx == 0
-                            xidx = Nx
-                        elseif xidx == Nx + 1
-                            xidx = 1
-                        end
-                        pop_buf[i, j, k, q] = pop[xidx, j - directions[q][2], k - directions[q][3], q]
-                    end
+                    pop_buf[1, j, k, q] = pop[Nx-1, j, k, q]
+                    pop_buf[Nx, j, k, q] = pop[2, j, k, q]
                 end   
             end         
         end
     elseif dimension == :y
         Ny = size(pop, 2)
-        for i in axes(pop, 1)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
+        for i in axes(pop, 1)
+            for k in axes(pop, 3)
                 for q in 1:Q
-                    for j in [1, Ny]
-                        yidx = i - directions[q][2]
-                        if yidx == 0
-                            yidx = Nx
-                        elseif yidx == Nx + 1
-                            yidx = 1
-                        end
-                        pop_buf[i, j, k, q] = pop[i - directions[q][1], yidx, k - directions[q][3], q]
-                    end
+                    pop_buf[i, 1, k, q] = pop[i, Ny-1, k, q]
+                    pop_buf[i, Ny, k, q] = pop[i, 2, k, q]
                 end    
             end        
         end
     elseif dimension == :z
         Nz = size(pop, 3)
-        for i in axes(pop, 1)[2:end-1]
-            for j in axes(pop, 2)[2:end-1]
+        for i in axes(pop, 1)
+            for j in axes(pop, 2)
                 for q in 1:Q
-                    for j in [1, Ny]
-                        zidx = i - directions[q][3]
-                        if zidx == 0
-                            zidx = Nx
-                        elseif zidx == Nx + 1
-                            zidx = 1
-                        end
-                        pop_buf[i, j, k, q] = pop[i - directions[q][1], j - directions[q][2], zidx, q]
-                    end
+                    pop_buf[i, j, 1, q] = pop[i, j, Nz-1, q]
+                    pop_buf[i, j, Nz, q] = pop[i, j, 2, q]
                 end
             end
         end
     end
 end
 
-@views function bounce_back_boundary(dimension, pop, pop_buf)
+@views function bounce_back_boundary!(dimension, pop, pop_buf)
     if dimension == :x
-        lx = 1
-        rx = size(pop, 1)
+        lx = 2
+        rx = size(pop, 1) - 1
         for j in axes(pop, 2)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
@@ -191,8 +185,8 @@ end
             end         
         end
     elseif dimension == :y
-        ly = 1
-        ry = size(pop, 2)
+        ly = 2
+        ry = size(pop, 2) - 1
         for i in axes(pop, 1)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q    
@@ -206,8 +200,8 @@ end
             end        
         end
     elseif dimension == :z
-        lz = 1
-        rz = size(pop, 3)
+        lz = 2
+        rz = size(pop, 3) - 1
         for i in axes(pop, 1)[2:end-1]
             for j in axes(pop, 2)[2:end-1]
                 for q in 1:Q
@@ -240,7 +234,6 @@ end
 
     Nx = size(velocity, 1)
     Ny = size(velocity, 2)
-    Nz = size(velocity, 3)
 
     for i in axes(velocity, 1)
         for j in axes(velocity, 2)
@@ -264,9 +257,9 @@ end
                 cell_velocity = zeros(3)
                 cell_temperature = 0
                 for q in 1:Q
-                    cell_density += density_pop[i, j, k, q]
-                    cell_temperature += temperature_pop[i, j, k, q]
-                    cell_velocity += directions[q] * density_pop[i, j, k, q]
+                    cell_density += density_pop[i + 1, j + 1, k + 1, q]
+                    cell_temperature += temperature_pop[i + 1, j + 1, k + 1, q]
+                    cell_velocity += directions[q] * density_pop[i + 1, j + 1, k + 1, q]
                 end
 
                 cell_velocity /= cell_density
@@ -302,11 +295,11 @@ end
 end
 
 @views function init_pop!(pop, velocity, values)
-    for i in axes(pop, 1)
-        for j in axes(pop, 2)
-            for k in axes(pop, 3)
+    for i in axes(pop, 1)[2:end-1]
+        for j in axes(pop, 2)[2:end-1]
+            for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
-                    @inbounds pop[i, j, k, q] = f_eq(q, velocity[i, j, k, :], values[i, j, k])
+                      pop[i, j, k, q] = f_eq(q, velocity[i-1, j-1, k-1, :], values[i-1, j-1, k-1])
                 end
             end
         end
@@ -321,7 +314,7 @@ function lb()
     lx = 40
     ly = 40
 
-    xc, yc = LinRange(0, lx, Nx + 2), LinRange(0, ly, Ny + 2)
+    xc, yc = LinRange(0, lx, Nx), LinRange(0, ly, Ny)
 
 
     density_pop = zeros(Nx + 2, Ny + 2, Nz + 2, Q)
@@ -330,9 +323,9 @@ function lb()
     temperature_pop = zeros(Nx + 2, Ny + 2, Nz + 2, Q)
     temperature_buf = copy(temperature_pop)
 
-    velocity = zeros(Nx + 2, Ny + 2, Nz + 2, 3)
-    density = zeros(Nx + 2, Ny + 2, Nz + 2)
-    temperature = zeros(Nx + 2, Ny + 2, Nz + 2)
+    velocity = zeros(Nx, Ny, Nz, 3)
+    density = zeros(Nx, Ny, Nz)
+    temperature = zeros(Nx, Ny, Nz)
 
     D = 1e-2
     viscosity = 5e-2
@@ -350,25 +343,40 @@ function lb()
     nvis = 5
     anim = Animation()
     st = ceil(Int, Nx / 20)
-    Xc, Yc = [x for x in xc[2:end-1], _ in yc[2:end-1]], [y for _ in xc[2:end-1], y in yc[2:end-1]]
+    Xc, Yc = [x for x in xc, _ in yc], [y for _ in xc, y in yc]
     Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
 
     init!(velocity, density, temperature, U_init, R)
 
     init_pop!(density_pop, velocity, density)
     init_pop!(temperature_pop, velocity, temperature)
+    periodic_boundary_update!(:x, density_pop, density_buf)
+    periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+    periodic_boundary_update!(:y, density_pop, density_buf)
+    periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    periodic_boundary_update!(:z, density_pop, density_buf)
+    periodic_boundary_update!(:z, temperature_pop, temperature_buf)
 
     for i in 1:nt
         apply_external_force!(velocity, R)
 
+        # @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
+        # @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
         collision!(density_pop, velocity, density, _τ_density)
         collision!(temperature_pop, velocity, temperature, _τ_temperature)
 
         streaming!(density_pop, density_buf)
         streaming!(temperature_pop, temperature_buf)
 
-        bounce_back_boundary(:x, density_pop, density_buf)
-        bounce_back_boundary(:x, temperature_pop, temperature_buf)
+        # periodic_boundary_update!(:x, density_pop, density_buf)
+        # periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+        periodic_boundary_update!(:y, density_pop, density_buf)
+        periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+        periodic_boundary_update!(:z, density_pop, density_buf)
+        periodic_boundary_update!(:z, temperature_pop, temperature_buf)
+
+        bounce_back_boundary!(:x, density_pop, density_buf)
+        bounce_back_boundary!(:x, temperature_pop, temperature_buf)
         # bounce_back_boundary(:z, density_pop, density_buf)
         # bounce_back_boundary(:z, temperature_pop, temperature_buf)
         # dirichlet_boundary(:ylower, density_buf, U_init, density)
@@ -380,7 +388,7 @@ function lb()
         update_moments!(velocity, density, temperature, density_pop, temperature_pop)
 
         if do_vis && (i % nvis == 0)
-            vel_c = copy(velocity[:, :, 1, :])
+            vel_c = copy(velocity[:, :, 1, 1:2])
             for i in axes(vel_c, 1)
                 for j in axes(vel_c, 2)
                     vel_c[i, j, :] /= norm(vel_c[i, j, :])
@@ -390,10 +398,10 @@ function lb()
             velx_p = vel_c[1:st:end, 1:st:end, 1]
             vely_p = vel_c[1:st:end, 1:st:end, 2]
 
-            heatmap(xc, yc, density[2:end-1, 2:end-1, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="density", c=:turbo)
+            heatmap(xc, yc, density[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="density", c=:turbo, clim=(0,1))
             dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
             
-            heatmap(xc, yc, temperature[2:end-1, 2:end-1, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="temperature", c=:turbo)
+            heatmap(xc, yc, temperature[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="temperature", c=:turbo, clim=(0,1))
             temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
             
             plot(dens, temp)
@@ -401,7 +409,7 @@ function lb()
         end
     end
     if do_vis
-        gif(anim, "../docs/3D_LB.gif")
+        gif(anim, "../docs/3D_XPU_LB.gif")
     end
 end
 
