@@ -5,9 +5,9 @@ using ParallelStencil
 const USE_GPU = false
 
 @static if USE_GPU
-    @init_parallel_stencil(CUDA, Float64, 3, inbounds=true)
+    @init_parallel_stencil(CUDA, Float64, 3, inbounds=false)
 else
-    @init_parallel_stencil(Threads, Float64, 3, inbounds=true)
+    @init_parallel_stencil(Threads, Float64, 3, inbounds=false)
 end
 
 
@@ -56,24 +56,13 @@ end
 # Speed of sound (in lattice units)
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
-# @parallel_indices (i, j, k) function collision!(pop, velocity, values, _τ)
-#     v = velocity[i, j, k, :]
-#     for q in 1:Q
-#         pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i, j, k])
-#     end
-#     return
-# end
-@views function collision!(pop, velocity, values, _τ)
-    for i in axes(pop, 1)[2:end-1]
-        for j in axes(pop, 2)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
-                v = velocity[i-1, j-1, k-1, :]
-                for q in 1:Q
-                    pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i-1, j-1, k-1])
-                end
-            end
-        end
+
+@parallel_indices (i, j, k) function collision!(pop, velocity, values, _τ)
+    v = velocity[i-1, j-1, k-1, :]
+    for q in 1:Q
+        pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i-1, j-1, k-1])
     end
+    return
 end
 
 @views function dirichlet_boundary!(boundary, pop, velocity, values)
@@ -216,16 +205,11 @@ end
     end
 end
 
-@views function streaming!(pop, pop_buf)
-    for i in axes(pop, 1)[2:end-1]
-        for j in axes(pop, 2)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
-                for q in 1:Q
-                    pop_buf[i, j, k, q] = pop[i - directions[q][1], j - directions[q][2], k - directions[q][3], q]
-                end
-            end
-        end
+@parallel_indices (i, j, k) function streaming!(pop, pop_buf)
+    for q in 1:Q
+        pop_buf[i, j, k, q] = pop[i - directions[q][1], j - directions[q][2], k - directions[q][3], q]
     end
+    return
 end
 
 @views function init!(velocity, density, temperature, U_init, R)
@@ -299,7 +283,7 @@ end
         for j in axes(pop, 2)[2:end-1]
             for k in axes(pop, 3)[2:end-1]
                 for q in 1:Q
-                      pop[i, j, k, q] = f_eq(q, velocity[i-1, j-1, k-1, :], values[i-1, j-1, k-1])
+                    pop[i, j, k, q] = f_eq(q, velocity[i-1, j-1, k-1, :], values[i-1, j-1, k-1])
                 end
             end
         end
@@ -317,15 +301,15 @@ function lb()
     xc, yc = LinRange(0, lx, Nx), LinRange(0, ly, Ny)
 
 
-    density_pop = zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
     density_buf = copy(density_pop)
     
-    temperature_pop = zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
     temperature_buf = copy(temperature_pop)
 
-    velocity = zeros(Nx, Ny, Nz, 3)
-    density = zeros(Nx, Ny, Nz)
-    temperature = zeros(Nx, Ny, Nz)
+    velocity = @zeros(Nx, Ny, Nz, 3)
+    density = @zeros(Nx, Ny, Nz)
+    temperature = @zeros(Nx, Ny, Nz)
 
     D = 1e-2
     viscosity = 5e-2
@@ -350,26 +334,26 @@ function lb()
 
     init_pop!(density_pop, velocity, density)
     init_pop!(temperature_pop, velocity, temperature)
-    periodic_boundary_update!(:x, density_pop, density_buf)
-    periodic_boundary_update!(:x, temperature_pop, temperature_buf)
-    periodic_boundary_update!(:y, density_pop, density_buf)
-    periodic_boundary_update!(:y, temperature_pop, temperature_buf)
-    periodic_boundary_update!(:z, density_pop, density_buf)
-    periodic_boundary_update!(:z, temperature_pop, temperature_buf)
+    # periodic_boundary_update!(:x, density_pop, density_buf)
+    # periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+    # periodic_boundary_update!(:y, density_pop, density_buf)
+    # periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    # periodic_boundary_update!(:z, density_pop, density_buf)
+    # periodic_boundary_update!(:z, temperature_pop, temperature_buf)
 
     for i in 1:nt
         apply_external_force!(velocity, R)
 
-        # @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
-        # @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
-        collision!(density_pop, velocity, density, _τ_density)
-        collision!(temperature_pop, velocity, temperature, _τ_temperature)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
+        # collision!(density_pop, velocity, density, _τ_density)
+        # collision!(temperature_pop, velocity, temperature, _τ_temperature)
 
-        streaming!(density_pop, density_buf)
-        streaming!(temperature_pop, temperature_buf)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
 
-        # periodic_boundary_update!(:x, density_pop, density_buf)
-        # periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+        periodic_boundary_update!(:x, density_pop, density_buf)
+        periodic_boundary_update!(:x, temperature_pop, temperature_buf)
         periodic_boundary_update!(:y, density_pop, density_buf)
         periodic_boundary_update!(:y, temperature_pop, temperature_buf)
         periodic_boundary_update!(:z, density_pop, density_buf)
