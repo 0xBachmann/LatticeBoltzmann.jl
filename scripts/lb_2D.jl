@@ -1,14 +1,33 @@
 using LinearAlgebra
 using Plots
+using ParallelStencil
 
-# const Q = 5
-# const directions = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]
-# const weights = [1/3, 1/6, 1/6, 1/6, 1/6]
+const method = :D2Q9
 
-const Q = 9
-const directions = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]
-const weights = [4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36]
-
+@static if method == :D2Q5
+    const Q = 5
+    const directions = [
+        [0, 0], 
+        [1, 0], [-1, 0], [0, 1], [0, -1]
+        ]
+    const weights = [
+        1/3, 
+        1/6, 1/6, 1/6, 1/6
+        ]
+elseif method == :D2Q9
+    const Q = 9
+    const directions = [
+        [0, 0], 
+        [1, 0], [-1, 0], [0, 1], [0, -1], 
+        [1, 1], [-1, -1], [1, -1], [-1, 1]
+        ]
+    const weights = [
+        4/9, 
+        1/9, 1/9, 1/9, 1/9, 
+        1/36, 1/36, 1/36, 1/36
+        ]
+end
+    
 # Speed of sound (in lattice units)
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
@@ -25,28 +44,28 @@ const _cs4 = 9.
 end
 
 @views function dirichlet_boundary(boundary, pop, velocity, values)
-    if boundary == :xlower
+    if boundary == :ylower
         y = 1
         for i in axes(pop, 1)
             for q in axes(pop, 3)
                 @inbounds pop[i, y, q] = f_eq(q, velocity, values[i, y])
             end            
         end
-    elseif boundary == :xupper
+    elseif boundary == :yupper
         y = size(pop, 2)
         for i in axes(pop, 1)
             for q in axes(pop, 3)
                 @inbounds pop[i, y, q] = f_eq(q, velocity, values[i, y])
             end            
         end
-    elseif boundary == :ylower
+    elseif boundary == :xlower
         x = 1
         for j in axes(pop, 2)
             for q in axes(pop, 3)
                 @inbounds pop[x, j, q] = f_eq(q, velocity, values[x, j])
             end            
         end
-    elseif boundary == :yupper
+    elseif boundary == :xupper
         x = size(pop, 1)
         for j in axes(pop, 2)
             for q in axes(pop, 3)
@@ -57,7 +76,7 @@ end
 end
 
 @views function bounce_back_boundary(dimension, pop, pop_buf)
-    if dimension == :x
+    if dimension == :y
         ly = 1
         ry = size(pop, 2)
         for i in axes(pop, 1)
@@ -70,7 +89,7 @@ end
                 end
             end            
         end
-    elseif dimension == :y
+    elseif dimension == :x
         lx = 1
         rx = size(pop, 1)
         for j in axes(pop, 2)
@@ -232,8 +251,8 @@ function lb()
         streaming!(density_pop, density_buf)
         streaming!(temperature_pop, temperature_buf)
 
-        bounce_back_boundary(:y, density_pop, density_buf)
-        bounce_back_boundary(:y, temperature_pop, temperature_buf)
+        bounce_back_boundary(:x, density_pop, density_buf)
+        bounce_back_boundary(:x, temperature_pop, temperature_buf)
         # dirichlet_boundary(:xlower, density_buf, U_init, density)
         # dirichlet_boundary(:xlower, temperature_buf, U_init, temperature)
 
