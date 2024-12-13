@@ -223,7 +223,7 @@ end
         for j in axes(velocity, 2)
             for k in axes(velocity, 3)
                 if ((i - Nx/2)^2 + (j - Ny/3)^2) < R^2
-                    velocity[i, j, k, :] = zeros(3)
+                    velocity[i, j, k, :] = @zeros(3)
                     temperature[i, j, k] = 1
                 else 
                     velocity[i, j, k, :] = U_init
@@ -238,7 +238,7 @@ end
         for j in axes(velocity, 2)
             for k in axes(velocity, 3)
                 cell_density = 0
-                cell_velocity = zeros(3)
+                cell_velocity = @zeros(3)
                 cell_temperature = 0
                 for q in 1:Q
                     cell_density += density_pop[i + 1, j + 1, k + 1, q]
@@ -264,7 +264,7 @@ end
         for j in axes(velocity, 2)
             for k in axes(velocity, 3)
                 if ((i - Nx/2)*(i - Nx/2) + (j - Ny/3)*(j - Ny/3)) < R^2
-                    velocity[i, j, k, :] = zeros(3)
+                    velocity[i, j, k, :] = @zeros(3)
                 end
             end
         end
@@ -302,10 +302,10 @@ function lb()
 
 
     density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-    density_buf = copy(density_pop)
+    density_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
     
     temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-    temperature_buf = copy(temperature_pop)
+    temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
 
     velocity = @zeros(Nx, Ny, Nz, 3)
     density = @zeros(Nx, Ny, Nz)
@@ -320,7 +320,7 @@ function lb()
     nt = 1000
 
     R = Nx / 5
-    U_init = zeros(3)
+    U_init = @zeros(3)
     U_init[2] = 0.2
 
     do_vis = true
