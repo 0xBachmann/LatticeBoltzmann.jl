@@ -1,6 +1,11 @@
+using ImplicitGlobalGrid
+import MPI
+
 using LinearAlgebra
+using Printf
 using Plots
 using ParallelStencil
+
 
 const USE_GPU = false
 
@@ -237,13 +242,15 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function init!(velocity, density, temperature, U_init, R)
+@parallel_indices (i, j, k) function init!(velocity, density, temperature, U_init, lx, ly, R)
     density[i, j, k] = 1
 
-    Nx = size(velocity, 1)
-    Ny = size(velocity, 2)
+    dx = lx / nx_g()
+    dy = ly / ny_g()
+    x = x_g(i, dx, velocity)
+    y = y_g(j, dy, velocity)
 
-    if ((i - Nx/2)^2 + (j - Ny/3)^2) < R^2
+    if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
         velocity[i, j, k, :] = @zeros(3)
         temperature[i, j, k] = 1
     else 
@@ -270,12 +277,14 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function apply_external_force!(velocity, R)
+@parallel_indices (i, j, k) function apply_external_force!(velocity, lx, ly, R)
 
-    Nx = size(velocity, 1)
-    Ny = size(velocity, 2)
-    
-    if ((i - Nx/2)*(i - Nx/2) + (j - Ny/3)*(j - Ny/3)) < R^2
+    dx = lx / nx_g()
+    dy = ly / ny_g()
+    x = x_g(i, dx, velocity)
+    y = y_g(j, dy, velocity)
+
+    if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
         velocity[i, j, k, :] = @zeros(3)
     end
     return
@@ -295,26 +304,125 @@ end
     return
 end
 
+@views function my_update_halo!(pop, comm)
+    Nx, Ny, Nz = size(pop)
+    me = MPI.Comm_rank(comm)
+    dims, periods, coords = MPI.Cart_get(comm)
+    
+
+    reqs = Vector{MPI.Request}()
+    recvbuffs = Vector{MPI.Buffer}()
+
+    for q in 2:Q # no need to exchange with self
+        c = directions[q]
+        ncoords = coords - c
+        if any(ncoords .< 0) || any(ncoords .>= dims) 
+            continue 
+        end
+
+        neighbour = MPI.Cart_rank(comm, ncoords)
+        
+        if c[1] == 1
+            xidx = 2
+        elseif c[1] == -1
+            xidx = Nx - 1
+        else
+            xidx = 2:Nx - 1
+        end
+        if c[2] == 1
+            yidx = 2
+        elseif c[2] == -1
+            yidx = Ny - 1
+        else
+            yidx = 2:Ny - 1
+        end
+        if c[3] == 1
+            zidx = 2
+        elseif c[3] == -1
+            zidx = Nz - 1
+        else
+            zidx = 2:Nz - 1
+        end
+        sendbuff = pop[xidx, yidx, zidx, :]
+        append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(sendbuff)))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
+
+        sreq = MPI.Isend(sendbuff, comm, dest=neighbour, tag=0)
+        rreq = MPI.Irecv!(recvbuffs[end], comm, source=neighbour, tag=0)
+
+        append!(reqs, [sreq, rreq])
+    end
+    
+    MPI.Waitall(MPI.RequestSet(reqs))
+
+    req_idx = 1
+    for q in 2:Q
+        c = directions[q]
+        ncoords = coords - c
+        if any(ncoords .< 0) || any(ncoords .>= dims) 
+            continue 
+        end
+
+        if c[1] == 1
+            xidx = 1
+        elseif c[1] == -1
+            xidx = Nx
+        else
+            xidx = 2:Nx - 1
+        end
+        if c[2] == 1
+            yidx = 1
+        elseif c[2] == -1
+            yidx = Ny
+        else
+            yidx = 2:Ny - 1
+        end
+        if c[3] == 1
+            zidx = 1
+        elseif c[3] == -1
+            zidx = Nz
+        else
+            zidx = 2:Nz - 1
+        end
+        pop[xidx, yidx, zidx, :] .= recvbuffs[req_idx].data
+
+        req_idx += 1
+    end
+    return
+end
+
+"""
+    save_array(Aname, A)
+
+Write an array `A` in binary format to disc. Resulting file is called `Aname` with suffix `".bin"`.  
+"""
+function save_array(Aname, A)
+    fname = string(Aname, ".bin")
+    out = open(fname, "w")
+    write(out, A)
+    close(out)
+end
+
 function lb()
     Nx = 40
     Ny = 70
-    Nz = 1
+    Nz = 3
+
+    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz)
 
     lx = 40
-    ly = 40
+    ly = 70
+    lz = 10
 
-    xc, yc = LinRange(0, lx, Nx), LinRange(0, ly, Ny)
+    dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
+
+    xc, yc = LinRange(0, lx, Nx-2), LinRange(0, ly, Ny-2)
 
 
-    density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-    density_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    density_pop = @zeros(Nx, Ny, Nz, Q)
+    density_buf = @zeros(Nx, Ny, Nz, Q)
     
-    temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-    temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-
-    velocity = @zeros(Nx, Ny, Nz, 3)
-    density = @zeros(Nx, Ny, Nz)
-    temperature = @zeros(Nx, Ny, Nz)
+    temperature_pop = @zeros(Nx, Ny, Nz, Q)
+    temperature_buf = @zeros(Nx, Ny, Nz, Q)
 
     D = 1e-2
     viscosity = 5e-2
@@ -324,45 +432,60 @@ function lb()
 
     nt = 1000
 
-    R = Nx / 5
+    R = lx / 5
     U_init = @zeros(3)
     U_init[2] = 0.2
 
+    velocity = @zeros(Nx - 2, Ny - 2, Nz - 2, 3)
+    density = @zeros(Nx - 2, Ny - 2, Nz - 2)
+    temperature = @zeros(Nx - 2, Ny - 2, Nz - 2)
+
     do_vis = true
     nvis = 10
-    anim = Animation()
-    st = ceil(Int, Nx / 15)
-    Xc, Yc = [x for x in xc, _ in yc], [y for _ in xc, y in yc]
-    Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
+    visdir = "visdir"
+    # st = ceil(Int, Nx / 15)
+    # Xc, Yc = [x for x in xc, _ in yc], [y for _ in xc, y in yc]
+    # Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
 
-    @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, density, temperature, U_init, R)
+    @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) init!(velocity, density, temperature, U_init, lx, ly, R)
     
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
+    @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(density_pop, velocity, density)
+    @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(temperature_pop, velocity, temperature)
 
-    @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_update!(:x, density_pop, density_buf)
-    @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
-    @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, density_pop, density_buf)
-    @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
+    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+
+    if do_vis
+        ENV["GKSwstype"]="nul"
+        if (me==0) if isdir("$visdir")==false mkdir("$visdir") end; loadpath="$visdir/"; anim=Animation(loadpath,String[]); println("Animation directory: $(anim.dir)") end
+        Nx_v, Ny_v, Nz_v = (Nx - 2) * dims[1], (Ny - 2) * dims[2], (Nz - 2) * dims[3]
+        (2 * Nx_v * Ny_v * Nz_v * sizeof(Data.Number) > 0.8 * Sys.free_memory()) && error("Not enough memory for visualization.")
+        density_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
+        temperature_v = zeros(Nx_v, Ny_v, Nz_v) # no halo local array for visu
+        xi_g, yi_g = LinRange(0, lx, Nx_v), LinRange(0, ly, Ny_v) # inner points only
+        iframe = 0
+    end
 
     for i in 1:nt
-        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, R)
+        @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) apply_external_force!(velocity, lx, ly, R)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
+        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) collision!(density_pop, velocity, density, _τ_density)
+        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
+        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) streaming!(density_pop, density_buf)
+        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) streaming!(temperature_pop, temperature_buf)
 
-        # @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, density_pop, density_buf)
-        # @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
-        # @parallel (2:Nx+1, 2:Nz+1) inlet_boundary_conditions!(:y, density_pop, density_buf, U_init, density)
-        # @parallel (2:Nx+1, 2:Nz+1) inlet_boundary_conditions!(:y, temperature_pop, temperature_buf, U_init, temperature)
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_update!(:z, density_pop, density_buf)
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
+        # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+        # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+        # @parallel (2:Nx-1, 2:Nz-1) inlet_boundary_conditions!(:y, density_pop, density_buf, U_init, density)
+        # @parallel (2:Nx-1, 2:Nz-1) inlet_boundary_conditions!(:y, temperature_pop, temperature_buf, U_init, temperature)
+        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
+        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
 
-        @parallel (2:Ny+1, 2:Nz+1) bounce_back_boundary!(:x, density_pop, density_buf)
-        @parallel (2:Ny+1, 2:Nz+1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
+        @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
+        @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
         # bounce_back_boundary(:z, density_pop, density_buf)
         # bounce_back_boundary(:z, temperature_pop, temperature_buf)
         # dirichlet_boundary(:ylower, density_buf, U_init, density)
@@ -371,31 +494,41 @@ function lb()
         density_pop, density_buf = density_buf, density_pop
         temperature_pop, temperature_buf = temperature_buf, temperature_pop 
 
-        @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
+        @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
+
+        my_update_halo!(density_pop, comm)
 
         if do_vis && (i % nvis == 0)
-            vel_c = copy(velocity[:, :, 1, 1:2])
-            for i in axes(vel_c, 1)
-                for j in axes(vel_c, 2)
-                    vel_c[i, j, :] /= norm(vel_c[i, j, :])
-                end
+            gather!(density, density_v)
+            gather!(temperature, temperature_v)
+            if me == 0
+                p1 = heatmap(xi_g, yi_g, density_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                p2 = heatmap(xi_g, yi_g, temperature_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                p3 = plot(p1, p2)
+                png(p3, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
             end
 
-            velx_p = vel_c[1:st:end, 1:st:end, 1]
-            vely_p = vel_c[1:st:end, 1:st:end, 2]
+            # vel_c = copy(velocity[:, :, 1, 1:2])
+            # for i in axes(vel_c, 1)
+            #     for j in axes(vel_c, 2)
+            #         vel_c[i, j, :] /= norm(vel_c[i, j, :])
+            #     end
+            # end
 
-            heatmap(xc, yc, density[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="density", c=:turbo, clim=(0,1))
-            dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
+            # velx_p = vel_c[1:st:end, 1:st:end, 1]
+            # vely_p = vel_c[1:st:end, 1:st:end, 2]
+
+            # heatmap(xc, yc, density[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="density", c=:turbo, clim=(0,1))
+            # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
             
-            heatmap(xc, yc, temperature[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="temperature", c=:turbo, clim=(0,1))
-            temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
+            # heatmap(xc, yc, temperature[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="temperature", c=:turbo, clim=(0,1))
+            # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
             
-            plot(dens, temp)
-            frame(anim)
+            # plot(dens, temp)
+            # frame(anim)
         end
-    end
-    if do_vis
-        gif(anim, "../docs/3D_XPU_LB.gif")
     end
 end
 
