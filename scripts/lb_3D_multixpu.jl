@@ -5,7 +5,7 @@ using LinearAlgebra
 using Printf
 using Plots
 using ParallelStencil
-
+using ProgressBars
 
 const USE_GPU = false
 
@@ -313,79 +313,80 @@ end
     reqs = Vector{MPI.Request}()
     recvbuffs = Vector{MPI.Buffer}()
 
-    for q in 2:Q # no need to exchange with self
-        c = directions[q]
-        ncoords = coords - c
-        if any(ncoords .< 0) || any(ncoords .>= dims) 
-            continue 
-        end
+    function valid_neighbour(neighbour_coords)
+        return !(any((neighbour_coords .< 0) .& (periods .== 0)) || any((neighbour_coords .>= dims) .& (periods .== 0)))
+    end
 
-        neighbour = MPI.Cart_rank(comm, ncoords)
-        
-        if c[1] == 1
-            xidx = 2
-        elseif c[1] == -1
-            xidx = Nx - 1
+    function boundary_dims(dir, send::Bool=false)
+        if dir[1] == 1
+            xidx = 1 + send
+        elseif dir[1] == -1
+            xidx = Nx - send
         else
             xidx = 2:Nx - 1
         end
-        if c[2] == 1
-            yidx = 2
-        elseif c[2] == -1
-            yidx = Ny - 1
+        if dir[2] == 1
+            yidx = 1 + send
+        elseif dir[2] == -1
+            yidx = Ny - send
         else
             yidx = 2:Ny - 1
         end
-        if c[3] == 1
-            zidx = 2
-        elseif c[3] == -1
-            zidx = Nz - 1
+        if dir[3] == 1
+            zidx = 1 + send
+        elseif dir[3] == -1
+            zidx = Nz - send
         else
             zidx = 2:Nz - 1
         end
-        sendbuff = pop[xidx, yidx, zidx, :]
-        append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(sendbuff)))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
+        return xidx, yidx, zidx
+    end
 
-        sreq = MPI.Isend(sendbuff, comm, dest=neighbour, tag=0)
-        rreq = MPI.Irecv!(recvbuffs[end], comm, source=neighbour, tag=0)
+    for q in 2:Q # no need to exchange with self
+        dir = directions[q]
+        if valid_neighbour(coords .+ dir)
+            neighbour = MPI.Cart_rank(comm, coords + dir)
+            if neighbour == me
+                continue
+            end
 
-        append!(reqs, [sreq, rreq])
+            xidx, yidx, zidx = boundary_dims(dir, true)
+            sendbuff = pop[xidx, yidx, zidx, q]
+
+            sreq = MPI.Isend(sendbuff, comm, dest=neighbour, tag=0)
+            append!(reqs, [sreq])
+        end
+        if valid_neighbour(coords .- dir)
+            neighbour = MPI.Cart_rank(comm, coords - dir)
+            if neighbour == me
+                continue
+            end
+
+            xidx, yidx, zidx = boundary_dims(dir, false)
+            append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(pop[xidx, yidx, zidx, q])))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
+            
+            rreq = MPI.Irecv!(recvbuffs[end], comm, source=neighbour, tag=0)
+            append!(reqs, [rreq])
+        end
     end
     
     MPI.Waitall(MPI.RequestSet(reqs))
 
     req_idx = 1
     for q in 2:Q
-        c = directions[q]
-        ncoords = coords - c
-        if any(ncoords .< 0) || any(ncoords .>= dims) 
-            continue 
-        end
+        dir = directions[q]
+        if valid_neighbour(coords - dir)
+            neighbour = MPI.Cart_rank(comm, coords - dir)
+            if neighbour == me
+                continue
+            end
+            xidx, yidx, zidx = boundary_dims(dir, false)
 
-        if c[1] == 1
-            xidx = 1
-        elseif c[1] == -1
-            xidx = Nx
-        else
-            xidx = 2:Nx - 1
-        end
-        if c[2] == 1
-            yidx = 1
-        elseif c[2] == -1
-            yidx = Ny
-        else
-            yidx = 2:Ny - 1
-        end
-        if c[3] == 1
-            zidx = 1
-        elseif c[3] == -1
-            zidx = Nz
-        else
-            zidx = 2:Nz - 1
-        end
-        pop[xidx, yidx, zidx, :] .= recvbuffs[req_idx].data
+            # TODO make parallel copy
+            pop[xidx, yidx, zidx, q] .= recvbuffs[req_idx].data
 
-        req_idx += 1
+            req_idx += 1
+        end
     end
     return
 end
@@ -407,16 +408,13 @@ function lb()
     Ny = 70
     Nz = 3
 
-    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz)
+    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz = 1)
 
     lx = 40
     ly = 70
-    lz = 10
+    lz = 3
 
     dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
-
-    xc, yc = LinRange(0, lx, Nx-2), LinRange(0, ly, Ny-2)
-
 
     density_pop = @zeros(Nx, Ny, Nz, Q)
     density_buf = @zeros(Nx, Ny, Nz, Q)
@@ -431,6 +429,7 @@ function lb()
     _τ_density = 1. / (viscosity * _cs2 + 0.5)
 
     nt = 1000
+    timesteps = 0:nt
 
     R = lx / 5
     U_init = @zeros(3)
@@ -452,10 +451,8 @@ function lb()
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(density_pop, velocity, density)
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(temperature_pop, velocity, temperature)
 
-    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
-    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
-    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
-    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    my_update_halo!(density_pop, comm)
+    my_update_halo!(temperature_pop, comm)
 
     if do_vis
         ENV["GKSwstype"]="nul"
@@ -463,12 +460,25 @@ function lb()
         Nx_v, Ny_v, Nz_v = (Nx - 2) * dims[1], (Ny - 2) * dims[2], (Nz - 2) * dims[3]
         (2 * Nx_v * Ny_v * Nz_v * sizeof(Data.Number) > 0.8 * Sys.free_memory()) && error("Not enough memory for visualization.")
         density_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
-        temperature_v = zeros(Nx_v, Ny_v, Nz_v) # no halo local array for visu
+        temperature_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
         xi_g, yi_g = LinRange(0, lx, Nx_v), LinRange(0, ly, Ny_v) # inner points only
         iframe = 0
     end
 
-    for i in 1:nt
+    for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
+        if do_vis && (i % nvis == 0)
+            gather!(density, density_v)
+            gather!(temperature, temperature_v)
+            if me == 0
+                p1 = heatmap(xi_g, yi_g, density_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                p2 = heatmap(xi_g, yi_g, temperature_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                p3 = plot(p1, p2)
+                png(p3, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
+            end
+        end
+
         @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) apply_external_force!(velocity, lx, ly, R)
 
         @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) collision!(density_pop, velocity, density, _τ_density)
@@ -481,55 +491,34 @@ function lb()
         # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
         # @parallel (2:Nx-1, 2:Nz-1) inlet_boundary_conditions!(:y, density_pop, density_buf, U_init, density)
         # @parallel (2:Nx-1, 2:Nz-1) inlet_boundary_conditions!(:y, temperature_pop, temperature_buf, U_init, temperature)
-        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
-        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
 
-        @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
-        @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
+        # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
+        # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
         # bounce_back_boundary(:z, density_pop, density_buf)
         # bounce_back_boundary(:z, temperature_pop, temperature_buf)
         # dirichlet_boundary(:ylower, density_buf, U_init, density)
         # dirichlet_boundary(:ylower, temperature_buf, U_init, temperature)
 
+        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf) # needed if not multiple threads in z
+        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf) # needed if not multiple threads in z
+        @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+        @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+        @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
+        @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+
         density_pop, density_buf = density_buf, density_pop
         temperature_pop, temperature_buf = temperature_buf, temperature_pop 
+
 
         @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
 
         my_update_halo!(density_pop, comm)
-
-        if do_vis && (i % nvis == 0)
-            gather!(density, density_v)
-            gather!(temperature, temperature_v)
-            if me == 0
-                p1 = heatmap(xi_g, yi_g, density_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-                p2 = heatmap(xi_g, yi_g, temperature_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-                p3 = plot(p1, p2)
-                png(p3, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
-                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
-            end
-
-            # vel_c = copy(velocity[:, :, 1, 1:2])
-            # for i in axes(vel_c, 1)
-            #     for j in axes(vel_c, 2)
-            #         vel_c[i, j, :] /= norm(vel_c[i, j, :])
-            #     end
-            # end
-
-            # velx_p = vel_c[1:st:end, 1:st:end, 1]
-            # vely_p = vel_c[1:st:end, 1:st:end, 2]
-
-            # heatmap(xc, yc, density[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="density", c=:turbo, clim=(0,1))
-            # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
-            
-            # heatmap(xc, yc, temperature[:, :, 1]', xlims=(xc[1], xc[end]), ylims=(yc[1], yc[end]), title="temperature", c=:turbo, clim=(0,1))
-            # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
-            
-            # plot(dens, temp)
-            # frame(anim)
-        end
+        my_update_halo!(temperature_pop, comm)
     end
+    if do_vis && me == 0
+        run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
+    end
+    finalize_global_grid()
 end
 
 lb()
