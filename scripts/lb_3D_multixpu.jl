@@ -392,7 +392,7 @@ end
         if valid_neighbour(coords + dir)
             neighbour = MPI.Cart_rank(comm, coords + dir)
             if neighbour == me
-                continue
+                # continue
             end
 
             xidx, yidx, zidx = boundary_dims(dir, :sender)
@@ -404,7 +404,7 @@ end
         if valid_neighbour(coords - dir)
             neighbour = MPI.Cart_rank(comm, coords - dir)
             if neighbour == me
-                continue
+                # continue
             end
 
             xidx, yidx, zidx = boundary_dims(dir, :receiver)
@@ -423,7 +423,7 @@ end
         if valid_neighbour(coords - dir)
             neighbour = MPI.Cart_rank(comm, coords - dir)
             if neighbour == me
-                continue
+                # continue
             end
             xidx, yidx, zidx = boundary_dims(dir, :receiver)
 
@@ -451,13 +451,13 @@ end
 function lb()
     Nx = 40
     Ny = 70
-    Nz = 3
+    Nz = 10
 
-    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz=1, periodx=1)
+    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz=1, periodx=1, periody=1)
 
     lx = 40
     ly = 70
-    lz = 3
+    lz = 10
 
     dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
 
@@ -476,7 +476,7 @@ function lb()
     nt = 1000
     timesteps = 0:nt
 
-    R = lx / 5
+    R = lx / 4
     U_init = @zeros(3)
     U_init[2] = 0.2
 
@@ -487,10 +487,8 @@ function lb()
     do_vis = true
     nvis = 10
     visdir = "visdir"
-    # st = ceil(Int, Nx / 15)
-    # Xc, Yc = [x for x in xc, _ in yc], [y for _ in xc, y in yc]
-    # Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
-
+    st = ceil(Int, Nx / 15)
+    
     @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) init!(velocity, density, temperature, U_init, lx, ly, R)
     
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(density_pop, velocity, density)
@@ -516,6 +514,8 @@ function lb()
         temperature_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
         xi_g, yi_g = LinRange(0, lx, Nx_v), LinRange(0, ly, Ny_v) # inner points only
         iframe = 0
+        Xc, Yc = [x for x in xi_g, _ in yi_g], [y for _ in xi_g, y in yi_g]
+        Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
     end
 
     for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
@@ -540,12 +540,12 @@ function lb()
         # dirichlet_boundary(:ylower, density_buf, U_init, density)
         # dirichlet_boundary(:ylower, temperature_buf, U_init, temperature)
 
-        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf) # needed if not multiple threads in z
-        @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf) # needed if not multiple threads in z
-        @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
-        @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
-        @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
-        @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+        # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf) # needed if not multiple threads in z
+        # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf) # needed if not multiple threads in z
+        # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+        # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+        # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
+        # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
 
         density_pop, density_buf = density_buf, density_pop
         temperature_pop, temperature_buf = temperature_buf, temperature_pop 
@@ -557,11 +557,29 @@ function lb()
         if do_vis && (i % nvis == 0)
             gather!(density, density_v)
             gather!(temperature, temperature_v)
+            vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2)), 1:2])
+            for i in axes(vel_c, 1)
+                for j in axes(vel_c, 2)
+                    vel_c[i, j, :] /= norm(vel_c[i, j, :])
+                end
+            end
+
+            velx_p = vel_c[1:st:end, 1:st:end, 1]
+            vely_p = vel_c[1:st:end, 1:st:end, 2]
+            velx_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 1], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 1], 2) * dims[2])
+            vely_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 2], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 2], 2) * dims[2])
+            gather!(velx_p, velx_p_g)
+            gather!(vely_p, vely_p_g)
+
             if me == 0
-                p1 = heatmap(xi_g, yi_g, density_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-                p2 = heatmap(xi_g, yi_g, temperature_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-                p3 = plot(p1, p2)
-                png(p3, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
+                heatmap(xi_g, yi_g, density_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+
+                heatmap(xi_g, yi_g, temperature_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+
+                p = plot(dens, temp)
+                png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
                 save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
                 save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
             end
