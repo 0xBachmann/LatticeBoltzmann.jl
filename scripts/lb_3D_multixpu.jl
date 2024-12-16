@@ -54,6 +54,8 @@ elseif method == :D3Q27
         1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54,
         1/216, 1/216, 1/216, 1/216, 1/216, 1/216, 1/216, 1/216
     ]
+else
+    @assert false "method not defined"
 end
 @assert Q == size(directions, 1) "Q=$Q, size of directions=$(size(directions, 1))"
 @assert Q == size(weights, 1) "Q=$Q, size of weights=$(size(weights, 1))"
@@ -137,9 +139,9 @@ end
             yidx = mod(i - directions[q][2] - 1, Ny) + 1
             zidx = mod(j - directions[q][3] - 1, Nz) + 1
             # if directions[q][1] == 1
-                pop_buf[1, i, j, q] = pop[Nx-1, yidx, zidx, q]
+                pop_buf[1, i, j, q] = pop[Nx-1, i, j, q]
             # elseif directions[q][1] == -1
-                pop_buf[Nx, i, j, q] = pop[2, yidx, zidx, q]
+                pop_buf[Nx, i, j, q] = pop[2, i, j, q]
             # end
         end   
     elseif dimension == :y
@@ -147,9 +149,9 @@ end
             xidx = mod(i - directions[q][1] - 1, Nx) + 1
             zidx = mod(j - directions[q][3] - 1, Nz) + 1
             # if directions[q][2] == 1
-                pop_buf[i, 1, j, q] = pop[xidx, Ny-1, zidx, q]
+                pop_buf[i, 1, j, q] = pop[i, Ny-1, j, q]
             # elseif directions[q][2] == -1
-                pop_buf[i, Ny, j, q] = pop[xidx, 2, zidx, q]
+                pop_buf[i, Ny, j, q] = pop[i, 2, j, q]
             # end
         end    
     elseif dimension == :z
@@ -157,9 +159,9 @@ end
             xidx = mod(i - directions[q][1] - 1, Nx) + 1
             yidx = mod(j - directions[q][2] - 1, Ny) + 1
             # if directions[q][3] == 1
-                pop_buf[i, j, 1, q] = pop[xidx, yidx, Nz-1, q]
+                pop_buf[i, j, 1, q] = pop[i, j, Nz-1, q]
             # elseif directions[q][3] == -1
-                pop_buf[i, j, Nz, q] = pop[xidx, yidx, 2, q]
+                pop_buf[i, j, Nz, q] = pop[i, j, 2, q]
             # end
         end
     end
@@ -267,14 +269,15 @@ end
     dy = ly / ny_g()
     x = x_g(i, dx, velocity)
     y = y_g(j, dy, velocity)
-
-    if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
+    
+    if ((x - lx / 2)^2 + (y - ly / 2) ^2) < R^2
         velocity[i, j, k, :] = @zeros(3)
         temperature[i, j, k] = 1
     else 
         velocity[i, j, k, :] = U_init
         temperature[i, j, k] = 0
     end
+    # temperature[i, j, k] = MPI.Comm_rank(MPI.COMM_WORLD)
     return
 end
 
@@ -302,7 +305,7 @@ end
     x = x_g(i, dx, velocity)
     y = y_g(j, dy, velocity)
 
-    if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
+    if ((x - lx / 2)^2 + (y - ly / 2) ^2) < R^2
         velocity[i, j, k, :] = @zeros(3)
     end
     return
@@ -323,6 +326,7 @@ end
 end
 
 @views function my_update_halo!(pop, comm)
+    MPI.Barrier(comm)
     Nx, Ny, Nz = size(pop)
     me = MPI.Comm_rank(comm)
     dims, periods, coords = MPI.Cart_get(comm)
@@ -409,12 +413,12 @@ end
 
             xidx, yidx, zidx = boundary_dims(dir, :receiver)
             append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(pop[xidx, yidx, zidx, :])))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
-            
+
             rreq = MPI.Irecv!(recvbuffs[end], comm, source=neighbour, tag=0)
             append!(reqs, [rreq])
         end
     end
-    
+
     MPI.Waitall(MPI.RequestSet(reqs))
 
     req_idx = 1
@@ -433,6 +437,7 @@ end
             req_idx += 1
         end
     end
+    MPI.Barrier(comm)
     return
 end
 
@@ -457,7 +462,7 @@ function lb()
 
     lx = 40
     ly = 70
-    lz = 10
+    lz = 3
 
     dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
 
@@ -487,23 +492,22 @@ function lb()
     do_vis = true
     nvis = 10
     visdir = "visdir"
-    st = ceil(Int, Nx / 15)
+    st = ceil(Int, Nx / 10)
     
     @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) init!(velocity, density, temperature, U_init, lx, ly, R)
     
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(density_pop, velocity, density)
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(temperature_pop, velocity, temperature)
 
-    @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
-    @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
-    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
-    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
-    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
-    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+    # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
+    # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
+    # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+    # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
+    # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
     # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
     # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
-    my_update_halo!(density_pop, comm)
-    my_update_halo!(temperature_pop, comm)
+    
 
     if do_vis
         ENV["GKSwstype"]="nul"
@@ -519,6 +523,9 @@ function lb()
     end
 
     for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
+        my_update_halo!(density_pop, comm)
+        my_update_halo!(temperature_pop, comm)
+
         @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
         @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) apply_external_force!(velocity, lx, ly, R)
 
@@ -550,8 +557,6 @@ function lb()
         density_pop, density_buf = density_buf, density_pop
         temperature_pop, temperature_buf = temperature_buf, temperature_pop 
 
-        my_update_halo!(density_pop, comm)
-        my_update_halo!(temperature_pop, comm)
 
 
         if do_vis && (i % nvis == 0)
@@ -572,11 +577,11 @@ function lb()
             gather!(vely_p, vely_p_g)
 
             if me == 0
-                heatmap(xi_g, yi_g, density_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-                dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+                dens = heatmap(xi_g, yi_g, density_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
 
-                heatmap(xi_g, yi_g, temperature_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-                temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+                temp = heatmap(xi_g, yi_g, temperature_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
 
                 p = plot(dens, temp)
                 png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
