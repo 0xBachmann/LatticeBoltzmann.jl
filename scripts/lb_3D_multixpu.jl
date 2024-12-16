@@ -129,23 +129,38 @@ end
 end
 
 @parallel_indices (i, j) function periodic_boundary_update!(dimension, pop, pop_buf)
+    Nx = size(pop, 1)
+    Ny = size(pop, 2)
+    Nz = size(pop, 3)
     if dimension == :x
-        Nx = size(pop, 1)
         for q in 1:Q
-            pop_buf[1, i, j, q] = pop[Nx-1, i, j, q]
-            pop_buf[Nx, i, j, q] = pop[2, i, j, q]
+            yidx = mod(i - directions[q][2] - 1, Ny) + 1
+            zidx = mod(j - directions[q][3] - 1, Nz) + 1
+            # if directions[q][1] == 1
+                pop_buf[1, i, j, q] = pop[Nx-1, yidx, zidx, q]
+            # elseif directions[q][1] == -1
+                pop_buf[Nx, i, j, q] = pop[2, yidx, zidx, q]
+            # end
         end   
     elseif dimension == :y
-        Ny = size(pop, 2)
         for q in 1:Q
-            pop_buf[i, 1, j, q] = pop[i, Ny-1, j, q]
-            pop_buf[i, Ny, j, q] = pop[i, 2, j, q]
+            xidx = mod(i - directions[q][1] - 1, Nx) + 1
+            zidx = mod(j - directions[q][3] - 1, Nz) + 1
+            # if directions[q][2] == 1
+                pop_buf[i, 1, j, q] = pop[xidx, Ny-1, zidx, q]
+            # elseif directions[q][2] == -1
+                pop_buf[i, Ny, j, q] = pop[xidx, 2, zidx, q]
+            # end
         end    
     elseif dimension == :z
-        Nz = size(pop, 3)
         for q in 1:Q
-            pop_buf[i, j, 1, q] = pop[i, j, Nz-1, q]
-            pop_buf[i, j, Nz, q] = pop[i, j, 2, q]
+            xidx = mod(i - directions[q][1] - 1, Nx) + 1
+            yidx = mod(j - directions[q][2] - 1, Ny) + 1
+            # if directions[q][3] == 1
+                pop_buf[i, j, 1, q] = pop[xidx, yidx, Nz-1, q]
+            # elseif directions[q][3] == -1
+                pop_buf[i, j, Nz, q] = pop[xidx, yidx, 2, q]
+            # end
         end
     end
     return
@@ -200,35 +215,38 @@ end
 
 @parallel_indices (i, j) function bounce_back_boundary!(dimension, pop, pop_buf)
     if dimension == :x
-        lx = 2
-        rx = size(pop, 1) - 1
+        Nx = size(pop, 1)
         for q in 1:Q
+            yidx = i + directions[q][2]
+            zidx = j + directions[q][3]
             if directions[q][1] == 1
-                pop_buf[rx, i, j, q] = pop[rx, i, j, (q%2 == 0) ? q+1 : q-1]
+                pop_buf[1, i, j, q] = pop[2, yidx, zidx, (q%2 == 0) ? q+1 : q-1]
             end
             if directions[q][1] == -1
-                pop_buf[lx, i, j, q] = pop[lx, i, j, (q%2 == 0) ? q+1 : q-1]
+                pop_buf[Nx, i, j, q] = pop[Nx - 1, yidx, zidx, (q%2 == 0) ? q+1 : q-1]
             end
         end   
     elseif dimension == :y
-        ly = 2
-        ry = size(pop, 2) - 1
+        Ny = size(pop, 2)
         for q in 1:Q    
+            xidx = i + directions[q][1]
+            zidx = j + directions[q][3]
             if directions[q][2] == 1
-                pop_buf[i, ry, j, q] = pop[i, ry, j, (q%2 == 0) ? q+1 : q-1]
+                pop_buf[i, 1, j, q] = pop[xidx, 2, zidx, (q%2 == 0) ? q+1 : q-1]
             end
             if directions[q][2] == -1
-                pop_buf[i, ly, j, q] = pop[i, ly, j, (q%2 == 0) ? q+1 : q-1]
+                pop_buf[i, Ny, j, q] = pop[xidx, Ny - 1, zidx, (q%2 == 0) ? q+1 : q-1]
             end    
         end
     elseif dimension == :z
-        lz = 2
-        rz = size(pop, 3) - 1
+        Nz = size(pop, 3)
         for q in 1:Q
+            xidx = i + directions[q][1]
+            yidx = j + directions[q][2]
             if directions[q][3] == 1 
-                pop_buf[i, j, rz, q] = pop[i, j, rz, (q%2 == 0) ? q+1 : q-1]
+                pop_buf[i, j, 1, q] = pop[xidx, yidx, 2, (q%2 == 0) ? q+1 : q-1]
             elseif directions[q][3] == -1
-                pop_buf[i, j, lz, q] = pop[i, j, lz, (q%2 == 0) ? q+1 : q-1]
+                pop_buf[i, j, Nz, q] = pop[xidx, yidx, Nz - 1, (q%2 == 0) ? q+1 : q-1]
             end
         end
     end
@@ -267,7 +285,7 @@ end
     for q in 1:Q
         cell_density += density_pop[i + 1, j + 1, k + 1, q]
         cell_temperature += temperature_pop[i + 1, j + 1, k + 1, q]
-        cell_velocity += directions[q] * density_pop[i + 1, j + 1, k + 1, q]
+        cell_velocity .+= directions[q] * density_pop[i + 1, j + 1, k + 1, q]
     end
 
     cell_velocity /= cell_density
@@ -317,53 +335,80 @@ end
         return !(any((neighbour_coords .< 0) .& (periods .== 0)) || any((neighbour_coords .>= dims) .& (periods .== 0)))
     end
 
-    function boundary_dims(dir, send::Bool=false)
-        if dir[1] == 1
-            xidx = 1 + send
-        elseif dir[1] == -1
-            xidx = Nx - send
+    function boundary_dims(dir, role)
+        if role == :sender
+            if dir[1] == 1
+                xidx = Nx - 1
+            elseif dir[1] == -1
+                xidx = 2
+            else
+                xidx = 2:Nx - 1
+            end
+            if dir[2] == 1
+                yidx = Ny - 1
+            elseif dir[2] == -1
+                yidx = 2
+            else
+                yidx = 2:Ny - 1
+            end
+            if dir[3] == 1
+                zidx = Nz - 1
+            elseif dir[3] == -1
+                zidx = 2
+            else
+                zidx = 2:Nz - 1
+            end
+        elseif role == :receiver
+            if dir[1] == 1
+                xidx = 1
+            elseif dir[1] == -1
+                xidx = Nx
+            else
+                xidx = 2:Nx - 1
+            end
+            if dir[2] == 1
+                yidx = 1
+            elseif dir[2] == -1
+                yidx = Ny
+            else
+                yidx = 2:Ny - 1
+            end
+            if dir[3] == 1
+                zidx = 1
+            elseif dir[3] == -1
+                zidx = Nz
+            else
+                zidx = 2:Nz - 1
+            end
         else
-            xidx = 2:Nx - 1
-        end
-        if dir[2] == 1
-            yidx = 1 + send
-        elseif dir[2] == -1
-            yidx = Ny - send
-        else
-            yidx = 2:Ny - 1
-        end
-        if dir[3] == 1
-            zidx = 1 + send
-        elseif dir[3] == -1
-            zidx = Nz - send
-        else
-            zidx = 2:Nz - 1
+            @assert(false)
         end
         return xidx, yidx, zidx
+
     end
 
     for q in 2:Q # no need to exchange with self
         dir = directions[q]
-        if valid_neighbour(coords .+ dir)
+        if valid_neighbour(coords + dir)
             neighbour = MPI.Cart_rank(comm, coords + dir)
             if neighbour == me
                 continue
             end
 
-            xidx, yidx, zidx = boundary_dims(dir, true)
-            sendbuff = pop[xidx, yidx, zidx, q]
+            xidx, yidx, zidx = boundary_dims(dir, :sender)
+            sendbuff = pop[xidx, yidx, zidx, :]
 
             sreq = MPI.Isend(sendbuff, comm, dest=neighbour, tag=0)
             append!(reqs, [sreq])
         end
-        if valid_neighbour(coords .- dir)
+        if valid_neighbour(coords - dir)
             neighbour = MPI.Cart_rank(comm, coords - dir)
             if neighbour == me
                 continue
             end
 
-            xidx, yidx, zidx = boundary_dims(dir, false)
-            append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(pop[xidx, yidx, zidx, q])))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
+            xidx, yidx, zidx = boundary_dims(dir, :receiver)
+            append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(pop[xidx, yidx, zidx, :])))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
             
             rreq = MPI.Irecv!(recvbuffs[end], comm, source=neighbour, tag=0)
             append!(reqs, [rreq])
@@ -380,10 +425,10 @@ end
             if neighbour == me
                 continue
             end
-            xidx, yidx, zidx = boundary_dims(dir, false)
+            xidx, yidx, zidx = boundary_dims(dir, :receiver)
 
             # TODO make parallel copy
-            pop[xidx, yidx, zidx, q] .= recvbuffs[req_idx].data
+            pop[xidx, yidx, zidx, :] .= recvbuffs[req_idx].data
 
             req_idx += 1
         end
@@ -408,7 +453,7 @@ function lb()
     Ny = 70
     Nz = 3
 
-    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz = 1)
+    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz=1, periodx=1)
 
     lx = 40
     ly = 70
@@ -451,6 +496,14 @@ function lb()
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(density_pop, velocity, density)
     @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(temperature_pop, velocity, temperature)
 
+    @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
+    @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
+    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+    @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
+    @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+    # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
+    # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
     my_update_halo!(density_pop, comm)
     my_update_halo!(temperature_pop, comm)
 
@@ -466,19 +519,7 @@ function lb()
     end
 
     for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
-        if do_vis && (i % nvis == 0)
-            gather!(density, density_v)
-            gather!(temperature, temperature_v)
-            if me == 0
-                p1 = heatmap(xi_g, yi_g, density_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-                p2 = heatmap(xi_g, yi_g, temperature_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-                p3 = plot(p1, p2)
-                png(p3, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
-                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
-            end
-        end
-
+        @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
         @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) apply_external_force!(velocity, lx, ly, R)
 
         @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) collision!(density_pop, velocity, density, _τ_density)
@@ -509,11 +550,22 @@ function lb()
         density_pop, density_buf = density_buf, density_pop
         temperature_pop, temperature_buf = temperature_buf, temperature_pop 
 
-
-        @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
-
         my_update_halo!(density_pop, comm)
         my_update_halo!(temperature_pop, comm)
+
+
+        if do_vis && (i % nvis == 0)
+            gather!(density, density_v)
+            gather!(temperature, temperature_v)
+            if me == 0
+                p1 = heatmap(xi_g, yi_g, density_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                p2 = heatmap(xi_g, yi_g, temperature_v[:, :, 1]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                p3 = plot(p1, p2)
+                png(p3, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
+            end
+        end
     end
     if do_vis && me == 0
         run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
