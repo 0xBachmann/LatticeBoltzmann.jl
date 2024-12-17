@@ -466,11 +466,11 @@ function lb()
 
     dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
 
-    density_pop = @zeros(Nx, Ny, Nz, Q)
-    density_buf = @zeros(Nx, Ny, Nz, Q)
+    density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    density_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
     
-    temperature_pop = @zeros(Nx, Ny, Nz, Q)
-    temperature_buf = @zeros(Nx, Ny, Nz, Q)
+    temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
 
     D = 1e-2
     viscosity = 5e-2
@@ -485,19 +485,19 @@ function lb()
     U_init = @zeros(3)
     U_init[2] = 0.2
 
-    velocity = @zeros(Nx - 2, Ny - 2, Nz - 2, 3)
-    density = @zeros(Nx - 2, Ny - 2, Nz - 2)
-    temperature = @zeros(Nx - 2, Ny - 2, Nz - 2)
+    velocity = @zeros(Nx, Ny, Nz, 3)
+    density = @zeros(Nx, Ny, Nz)
+    temperature = @zeros(Nx, Ny, Nz)
 
     do_vis = true
     nvis = 10
     visdir = "visdir"
     st = ceil(Int, Nx / 10)
     
-    @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) init!(velocity, density, temperature, U_init, lx, ly, R)
+    @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, density, temperature, U_init, lx, ly, R)
     
-    @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(density_pop, velocity, density)
-    @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) init_pop!(temperature_pop, velocity, temperature)
+    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
+    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
 
     # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
     # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
@@ -512,7 +512,7 @@ function lb()
     if do_vis
         ENV["GKSwstype"]="nul"
         if (me==0) if isdir("$visdir")==false mkdir("$visdir") end; loadpath="$visdir/"; anim=Animation(loadpath,String[]); println("Animation directory: $(anim.dir)") end
-        Nx_v, Ny_v, Nz_v = (Nx - 2) * dims[1], (Ny - 2) * dims[2], (Nz - 2) * dims[3]
+        Nx_v, Ny_v, Nz_v = (Nx) * dims[1], (Ny) * dims[2], (Nz) * dims[3]
         (2 * Nx_v * Ny_v * Nz_v * sizeof(Data.Number) > 0.8 * Sys.free_memory()) && error("Not enough memory for visualization.")
         density_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
         temperature_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
@@ -523,17 +523,19 @@ function lb()
     end
 
     for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
+
+        @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
+        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, lx, ly, R)
+
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
+
+
         my_update_halo!(density_pop, comm)
         my_update_halo!(temperature_pop, comm)
 
-        @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
-        @parallel (1:Nx-2, 1:Ny-2, 1:Nz-2) apply_external_force!(velocity, lx, ly, R)
-
-        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) collision!(density_pop, velocity, density, _τ_density)
-        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
-
-        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) streaming!(density_pop, density_buf)
-        @parallel (2:Nx-1, 2:Ny-1, 2:Nz-1) streaming!(temperature_pop, temperature_buf)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
 
         # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
         # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
