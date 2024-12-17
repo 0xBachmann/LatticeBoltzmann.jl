@@ -1,3 +1,4 @@
+using CellArrays, StaticArrays
 using ImplicitGlobalGrid
 import MPI
 
@@ -45,11 +46,11 @@ function lb()
 
     dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
 
-    density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-    density_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
+    density_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
     
-    temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
-    temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, Q)
+    temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
+    temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
 
     D = 1e-2
     viscosity = 5e-2
@@ -61,10 +62,9 @@ function lb()
     timesteps = 1:nt
 
     R = lx / 4
-    U_init = @zeros(3)
-    U_init[2] = 0.2
+    U_init = Data.Array([0, 0.2, 0])
 
-    velocity = @zeros(Nx, Ny, Nz, 3)
+    velocity = @zeros(Nx, Ny, Nz, celldims=3)
     density = @zeros(Nx, Ny, Nz)
     temperature = @zeros(Nx, Ny, Nz)
 
@@ -72,6 +72,8 @@ function lb()
     nvis = 10
     visdir = "visdir"
     st = ceil(Int, Nx / 10)
+
+    update_halo!(density_pop, temperature_pop)
     
     @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, density, temperature, U_init, lx, ly, R)
     

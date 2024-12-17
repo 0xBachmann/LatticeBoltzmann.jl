@@ -1,38 +1,39 @@
+using CellArrays, StaticArrays
 using ParallelStencil
 using ImplicitGlobalGrid
 import MPI
 
 @static if method == :D3Q15
     const Q = 15
-    const directions = [
-        [0, 0, 0], 
-        [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], 
-        [1, 1, 1], [-1, -1, -1], [1, 1, -1], [-1, -1, 1], [1, -1, 1], [-1, 1, -1], [-1, 1, 1], [1, -1, -1]
+    const directions = SA[
+        SA[0, 0, 0], 
+        SA[1, 0, 0], SA[-1, 0, 0], SA[0, 1, 0], SA[0, -1, 0], SA[0, 0, 1], SA[0, 0, -1], 
+        SA[1, 1, 1], SA[-1, -1, -1], SA[1, 1, -1], SA[-1, -1, 1], SA[1, -1, 1], SA[-1, 1, -1], SA[-1, 1, 1], SA[1, -1, -1]
         ]
-    const weights = [
+    const weights = SA[
         2/9, 
         1/9, 1/9, 1/9, 1/9, 1/9, 1/9, 
         1/72, 1/72, 1/72, 1/72, 1/72, 1/72, 1/72, 1/72
         ]
 elseif method == :D3Q19
     const Q = 19
-    const directions = [
-        [0, 0, 0], 
-        [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], 
-        [1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0], [1, 0, 1], [-1, 0, -1], [-1, 0, 1], [1, 0, -1], [0, 1, 1], [0, -1, -1], [0, 1, -1], [0, -1, 1]
+    const directions = SA[
+        SA[0, 0, 0], 
+        SA[1, 0, 0], SA[-1, 0, 0], SA[0, 1, 0], SA[0, -1, 0], SA[0, 0, 1], SA[0, 0, -1], 
+        SA[1, 1, 0], SA[-1, -1, 0], SA[1, -1, 0], SA[-1, 1, 0], SA[1, 0, 1], SA[-1, 0, -1], SA[-1, 0, 1], SA[1, 0, -1], SA[0, 1, 1], SA[0, -1, -1], SA[0, 1, -1], SA[0, -1, 1]
         ]
-    const weights = [
+    const weights = SA[
         1/3, 1/18, 1/18, 1/18, 1/18, 1/18, 1/18, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36, 1/36
         ]
 elseif method == :D3Q27
     const Q = 27
-    const directions = [
-        [0, 0, 0],
-        [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], 
-        [1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0], [1, 0, 1], [-1, 0, -1], [-1, 0, 1], [1, 0, -1], [0, 1, 1], [0, -1, -1], [0, 1, -1], [0, -1, 1],
-        [1, 1, 1], [-1, -1, -1], [1, 1, -1], [-1, -1, 1], [1, -1, 1], [-1, 1, -1], [-1, 1, 1], [1, -1, -1]
+    const directions = SA[
+        SA[0, 0, 0],
+        SA[1, 0, 0], SA[-1, 0, 0], SA[0, 1, 0], SA[0, -1, 0], SA[0, 0, 1], SA[0, 0, -1], 
+        SA[1, 1, 0], SA[-1, -1, 0], SA[1, -1, 0], SA[-1, 1, 0], SA[1, 0, 1], SA[-1, 0, -1], SA[-1, 0, 1], SA[1, 0, -1], SA[0, 1, 1], SA[0, -1, -1], SA[0, 1, -1], SA[0, -1, 1],
+        SA[1, 1, 1], SA[-1, -1, -1], SA[1, 1, -1], SA[-1, -1, 1], SA[1, -1, 1], SA[-1, 1, -1], SA[-1, 1, 1], SA[1, -1, -1]
     ]
-    const weights = [
+    const weights = SA[
         8/27,
         2/27, 2/27, 2/27, 2/27, 2/27, 2/27,
         1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54, 1/54,
@@ -71,7 +72,7 @@ end
         for i in axes(pop, 1)[2:end-1]
             for j in axes(pop, 2)[2:end-1]
                 for q in 1:Q
-                    pop[i, j, z] = f_eq(q, velocity, values[i, j, z])
+                    pop[i, j, z, q] = f_eq(q, velocity, values[i, j, z])
                 end
             end
         end
@@ -255,10 +256,10 @@ end
     y = y_g(j, dy, velocity)
     
     if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
-        velocity[i, j, k, :] = @zeros(3)
+        velocity[i, j, k, :] .= @zeros(3)
         temperature[i, j, k] = 1
     else 
-        velocity[i, j, k, :] = U_init
+        velocity[i, j, k, :] .= U_init
         temperature[i, j, k] = 0
     end
     # temperature[i, j, k] = MPI.Comm_rank(MPI.COMM_WORLD)
