@@ -74,7 +74,7 @@ function lb()
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
 
-    for _ in (me == 0 ? ProgressBar(timesteps) : timesteps)
+    for _ in timesteps
 
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
         @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, lx, ly, R)
