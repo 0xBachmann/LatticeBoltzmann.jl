@@ -1,4 +1,4 @@
-using CellArrays, StaticArrays
+using CellArraysIndexing, StaticArrays
 using ParallelStencil
 using ImplicitGlobalGrid
 import MPI
@@ -50,9 +50,9 @@ const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
 
 @parallel_indices (i, j, k) function collision!(pop, velocity, values, _τ)
-    v = velocity[i-1, j-1, k-1, :]
+    v = velocity[i-1, j-1, k-1]
     for q in 1:Q
-        pop[i, j, k, q] = (1. - _τ) * pop[i, j, k, q] + _τ * f_eq(q, v, values[i-1, j-1, k-1])
+        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, values[i-1, j-1, k-1])
     end
     return
 end
@@ -115,40 +115,40 @@ end
     end
 end
 
-@parallel_indices (i, j) function periodic_boundary_update!(dimension, pop, pop_buf)
+@parallel_indices (i, j) function periodic_boundary_update!(dimension, pop)
     Nx = size(pop, 1)
     Ny = size(pop, 2)
     Nz = size(pop, 3)
     if dimension == :x
-        for q in 1:Q
-            yidx = mod(i - directions[q][2] - 1, Ny) + 1
-            zidx = mod(j - directions[q][3] - 1, Nz) + 1
+        # for q in 1:Q
+        #     yidx = mod(i - directions[q][2] - 1, Ny) + 1
+        #     zidx = mod(j - directions[q][3] - 1, Nz) + 1
             # if directions[q][1] == 1
-                pop_buf[1, i, j, q] = pop[Nx-1, i, j, q]
+                pop[1, i, j] = pop[Nx-1, i, j]
             # elseif directions[q][1] == -1
-                pop_buf[Nx, i, j, q] = pop[2, i, j, q]
+                pop[Nx, i, j] = pop[2, i, j]
             # end
-        end   
+        # end   
     elseif dimension == :y
-        for q in 1:Q
-            xidx = mod(i - directions[q][1] - 1, Nx) + 1
-            zidx = mod(j - directions[q][3] - 1, Nz) + 1
+        # for q in 1:Q
+        #     xidx = mod(i - directions[q][1] - 1, Nx) + 1
+        #     zidx = mod(j - directions[q][3] - 1, Nz) + 1
             # if directions[q][2] == 1
-                pop_buf[i, 1, j, q] = pop[i, Ny-1, j, q]
+                pop[i, 1, j] = pop[i, Ny-1, j]
             # elseif directions[q][2] == -1
-                pop_buf[i, Ny, j, q] = pop[i, 2, j, q]
+                pop[i, Ny, j] = pop[i, 2, j]
             # end
-        end    
+        # end    
     elseif dimension == :z
-        for q in 1:Q
-            xidx = mod(i - directions[q][1] - 1, Nx) + 1
-            yidx = mod(j - directions[q][2] - 1, Ny) + 1
+        # for q in 1:Q
+        #     xidx = mod(i - directions[q][1] - 1, Nx) + 1
+        #     yidx = mod(j - directions[q][2] - 1, Ny) + 1
             # if directions[q][3] == 1
-                pop_buf[i, j, 1, q] = pop[i, j, Nz-1, q]
+                pop[i, j, 1] = pop[i, j, Nz-1]
             # elseif directions[q][3] == -1
-                pop_buf[i, j, Nz, q] = pop[i, j, 2, q]
+                pop[i, j, Nz] = pop[i, j, 2]
             # end
-        end
+        # end
     end
     return
 end
@@ -242,7 +242,7 @@ end
 
 @parallel_indices (i, j, k) function streaming!(pop, pop_buf)
     for q in 1:Q
-        pop_buf[i, j, k, q] = pop[i - directions[q][1], j - directions[q][2], k - directions[q][3], q]
+        @index pop_buf[q, i, j, k] = @index pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
     end
     return
 end
@@ -252,14 +252,14 @@ end
 
     dx = lx / nx_g()
     dy = ly / ny_g()
-    x = x_g(i, dx, velocity)
-    y = y_g(j, dy, velocity)
+    x = x_g(i, dx, density)
+    y = y_g(j, dy, density)
     
     if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
-        velocity[i, j, k, :] .= @zeros(3)
+        velocity[i, j, k] = SA[0., 0., 0.]
         temperature[i, j, k] = 1
     else 
-        velocity[i, j, k, :] .= U_init
+        velocity[i, j, k] = U_init
         temperature[i, j, k] = 0
     end
     # temperature[i, j, k] = MPI.Comm_rank(MPI.COMM_WORLD)
@@ -268,30 +268,30 @@ end
 
 @parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop)
     cell_density = 0
-    cell_velocity = @zeros(3)
+    cell_velocity = @zeros(1, celldims=3)
     cell_temperature = 0
     for q in 1:Q
-        cell_density += density_pop[i + 1, j + 1, k + 1, q]
-        cell_temperature += temperature_pop[i + 1, j + 1, k + 1, q]
-        cell_velocity .+= directions[q] * density_pop[i + 1, j + 1, k + 1, q]
+        cell_density += @index density_pop[q, i + 1, j + 1, k + 1]
+        cell_temperature += @index temperature_pop[q, i + 1, j + 1, k + 1]
+        cell_velocity[1] += directions[q] * @index density_pop[q, i + 1, j + 1, k + 1]
     end
 
-    cell_velocity /= cell_density
-    velocity[i, j, k, :] = cell_velocity
+    cell_velocity[1] /= cell_density
+    velocity[i, j, k] = cell_velocity[1]
     density[i, j, k] = cell_density
     temperature[i, j, k] = cell_temperature
     return
 end
 
-@parallel_indices (i, j, k) function apply_external_force!(velocity, lx, ly, R)
+@parallel_indices (i, j, k) function apply_external_force!(velocity, density, lx, ly, R)
 
     dx = lx / nx_g()
     dy = ly / ny_g()
-    x = x_g(i, dx, velocity)
-    y = y_g(j, dy, velocity)
+    x = x_g(i, dx, density)
+    y = y_g(j, dy, density)
 
     if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
-        velocity[i, j, k, :] = @zeros(3)
+        velocity[i, j, k] = @zeros(1, celldims=3)[1]
     end
     return
 end
@@ -305,7 +305,7 @@ end
 
 @parallel_indices (i, j, k) function init_pop!(pop, velocity, values)
     for q in 1:Q
-        pop[i, j, k, q] = f_eq(q, velocity[i-1, j-1, k-1, :], values[i-1, j-1, k-1])
+        @index pop[q, i, j, k] = f_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
     end
     return
 end

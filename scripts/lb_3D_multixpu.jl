@@ -1,4 +1,4 @@
-using CellArrays, StaticArrays
+using CellArraysIndexing, StaticArrays
 using ImplicitGlobalGrid
 import MPI
 
@@ -59,10 +59,10 @@ function lb()
     _τ_density = 1. / (viscosity * _cs2 + 0.5)
 
     nt = 1000
-    timesteps = 1:nt
+    timesteps = 0:nt
 
     R = lx / 4
-    U_init = Data.Array([0, 0.2, 0])
+    U_init = SA[0, 0.2, 0]
 
     velocity = @zeros(Nx, Ny, Nz, celldims=3)
     density = @zeros(Nx, Ny, Nz)
@@ -72,8 +72,6 @@ function lb()
     nvis = 10
     visdir = "visdir"
     st = ceil(Int, Nx / 10)
-
-    update_halo!(density_pop, temperature_pop)
     
     @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, density, temperature, U_init, lx, ly, R)
     
@@ -104,16 +102,52 @@ function lb()
     end
 
     for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
+        if do_vis && (i % nvis == 0)
+            # gather!(density, density_v)
+            # gather!(temperature, temperature_v)
+            # vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2)), 1:2])
+            # for i in axes(vel_c, 1)
+            #     for j in axes(vel_c, 2)
+            #         vel_c[i, j, :] /= norm(vel_c[i, j, :])
+            #     end
+            # end
+
+            # velx_p = vel_c[1:st:end, 1:st:end, 1]
+            # vely_p = vel_c[1:st:end, 1:st:end, 2]
+            # velx_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 1], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 1], 2) * dims[2])
+            # vely_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 2], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 2], 2) * dims[2])
+            # gather!(velx_p, velx_p_g)
+            # gather!(vely_p, vely_p_g)
+
+            if me == 0
+                dens = heatmap(xi_g, yi_g, density[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+
+                temp = heatmap(xi_g, yi_g, temperature[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+
+                p = plot(dens, temp)
+                png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
+            end
+        end
 
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
-        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, lx, ly, R)
+        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, density, lx, ly, R)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
 
 
-        lb_update_halo!(density_pop, comm)
-        lb_update_halo!(temperature_pop, comm)
+        # lb_update_halo!(density_pop, comm)
+        # lb_update_halo!(temperature_pop, comm)
+        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_update!(:z, density_pop) # needed if not multiple threads in z
+        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_update!(:z, temperature_pop) # needed if not multiple threads in z
+        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, density_pop)
+        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, temperature_pop)
+        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_update!(:x, density_pop)
+        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_update!(:x, temperature_pop)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
@@ -142,36 +176,7 @@ function lb()
 
 
 
-        if do_vis && (i % nvis == 0)
-            gather!(density, density_v)
-            gather!(temperature, temperature_v)
-            vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2)), 1:2])
-            for i in axes(vel_c, 1)
-                for j in axes(vel_c, 2)
-                    vel_c[i, j, :] /= norm(vel_c[i, j, :])
-                end
-            end
-
-            velx_p = vel_c[1:st:end, 1:st:end, 1]
-            vely_p = vel_c[1:st:end, 1:st:end, 2]
-            velx_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 1], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 1], 2) * dims[2])
-            vely_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 2], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 2], 2) * dims[2])
-            gather!(velx_p, velx_p_g)
-            gather!(vely_p, vely_p_g)
-
-            if me == 0
-                dens = heatmap(xi_g, yi_g, density_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-                # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
-
-                temp = heatmap(xi_g, yi_g, temperature_v[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-                # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
-
-                p = plot(dens, temp)
-                png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
-                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
-            end
-        end
+        
     end
     if do_vis && me == 0
         run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
