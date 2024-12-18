@@ -115,11 +115,8 @@ end
     end
 end
 
-@parallel_indices (i, j) function periodic_boundary_update!(dimension, pop)
+@parallel_indices (i, j) function periodic_boundary_x!(pop)
     Nx = size(pop, 1)
-    Ny = size(pop, 2)
-    Nz = size(pop, 3)
-    if dimension == :x
         # for q in 1:Q
         #     yidx = mod(i - directions[q][2] - 1, Ny) + 1
         #     zidx = mod(j - directions[q][3] - 1, Nz) + 1
@@ -129,17 +126,24 @@ end
                 pop[Nx, i, j] = pop[2, i, j]
             # end
         # end   
-    elseif dimension == :y
+    return
+end
+@parallel_indices (i, k) function periodic_boundary_y!(pop)
+    Ny = size(pop, 2)
         # for q in 1:Q
         #     xidx = mod(i - directions[q][1] - 1, Nx) + 1
         #     zidx = mod(j - directions[q][3] - 1, Nz) + 1
             # if directions[q][2] == 1
-                pop[i, 1, j] = pop[i, Ny-1, j]
+                pop[i, 1, k] = pop[i, Ny-1, k]
             # elseif directions[q][2] == -1
-                pop[i, Ny, j] = pop[i, 2, j]
+                pop[i, Ny, k] = pop[i, 2, k]
             # end
-        # end    
-    elseif dimension == :z
+        # end 
+    return
+end
+@parallel_indices (i, j) function periodic_boundary_z!(pop)
+    Nz = size(pop, 3)
+
         # for q in 1:Q
         #     xidx = mod(i - directions[q][1] - 1, Nx) + 1
         #     yidx = mod(j - directions[q][2] - 1, Ny) + 1
@@ -149,7 +153,6 @@ end
                 pop[i, j, Nz] = pop[i, j, 2]
             # end
         # end
-    end
     return
 end
 
@@ -247,51 +250,35 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function init!(velocity, density, temperature, U_init, lx, ly, R)
-    density[i, j, k] = 1
-
-    dx = lx / nx_g()
-    dy = ly / ny_g()
-    x = x_g(i, dx, density)
-    y = y_g(j, dy, density)
-    
-    if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
-        velocity[i, j, k] = SA[0., 0., 0.]
-        temperature[i, j, k] = 1
-    else 
+@parallel_indices (i, j, k) function init!(velocity, temperature, boundary, U_init)    
+    if boundary[i, j, k] == 0.
         velocity[i, j, k] = U_init
-        temperature[i, j, k] = 0
+    else 
+        temperature[i, j, k] = 1.
     end
-    # temperature[i, j, k] = MPI.Comm_rank(MPI.COMM_WORLD)
     return
 end
 
 @parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop)
-    cell_density = 0
-    cell_velocity = @zeros(1, celldims=3)
-    cell_temperature = 0
+    cell_density = 0.
+    cell_velocity = @SVector zeros(3)
+    cell_temperature = 0.
     for q in 1:Q
         cell_density += @index density_pop[q, i + 1, j + 1, k + 1]
         cell_temperature += @index temperature_pop[q, i + 1, j + 1, k + 1]
-        cell_velocity[1] += directions[q] * @index density_pop[q, i + 1, j + 1, k + 1]
+        cell_velocity += directions[q] * @index density_pop[q, i + 1, j + 1, k + 1]
     end
 
-    cell_velocity[1] /= cell_density
-    velocity[i, j, k] = cell_velocity[1]
+    cell_velocity /= cell_density
+    velocity[i, j, k] = cell_velocity
     density[i, j, k] = cell_density
     temperature[i, j, k] = cell_temperature
     return
 end
 
-@parallel_indices (i, j, k) function apply_external_force!(velocity, density, lx, ly, R)
-
-    dx = lx / nx_g()
-    dy = ly / ny_g()
-    x = x_g(i, dx, density)
-    y = y_g(j, dy, density)
-
-    if ((x - lx / 2)^2 + (y - ly / 3) ^2) < R^2
-        velocity[i, j, k] = @zeros(1, celldims=3)[1]
+@parallel_indices (i, j, k) function apply_external_force!(velocity, boundary, lx, ly, R)
+    if boundary[i, j, k] != 0.
+        velocity[i, j, k] = @SVector zeros(3)
     end
     return
 end

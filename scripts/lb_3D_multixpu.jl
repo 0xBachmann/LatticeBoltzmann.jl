@@ -8,7 +8,6 @@ using Plots
 using ParallelStencil
 using ProgressBars
 
-
 const USE_GPU = false
 
 @static if USE_GPU
@@ -62,30 +61,32 @@ function lb()
     timesteps = 0:nt
 
     R = lx / 4
-    U_init = SA[0, 0.2, 0]
+    U_init = @SVector [0., 0.2, 0.]
 
     velocity = @zeros(Nx, Ny, Nz, celldims=3)
-    density = @zeros(Nx, Ny, Nz)
+    density = @ones(Nx, Ny, Nz)
+    boundary = Data.Array([((x_g(ix, dx, density) - lx / 2)^2 + (y_g(iy, dy, density) - ly / 3) ^2) < R^2 ? 1. : 0. for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
     temperature = @zeros(Nx, Ny, Nz)
+
 
     do_vis = true
     nvis = 10
     visdir = "visdir"
     st = ceil(Int, Nx / 10)
     
-    @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, density, temperature, U_init, lx, ly, R)
+    @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, temperature, boundary, U_init)
     
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
 
-    # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
-    # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
-    # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
-    # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
-    # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
-    # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
-    # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
-    # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
+    # # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
+    # # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
+    # # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, density_pop, density_buf)
+    # # @parallel (1:Nx, 1:Nz) periodic_boundary_update!(:y, temperature_pop, temperature_buf)
+    # # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, density_pop, density_buf)
+    # # @parallel (1:Ny, 1:Nz) periodic_boundary_update!(:x, temperature_pop, temperature_buf)
+    # # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, density_pop, density_buf)
+    # # @parallel (2:Ny-1, 2:Nz-1) bounce_back_boundary!(:x, temperature_pop, temperature_buf)
     
 
     if do_vis
@@ -120,10 +121,10 @@ function lb()
             # gather!(vely_p, vely_p_g)
 
             if me == 0
-                dens = heatmap(xi_g, yi_g, density[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                dens = heatmap(xi_g, yi_g, Array(density[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
                 # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
 
-                temp = heatmap(xi_g, yi_g, temperature[:, :, Int(ceil((Nz-2)/2))]'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
                 # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
 
                 p = plot(dens, temp)
@@ -134,7 +135,7 @@ function lb()
         end
 
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
-        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, density, lx, ly, R)
+        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary, lx, ly, R)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
@@ -142,12 +143,12 @@ function lb()
 
         # lb_update_halo!(density_pop, comm)
         # lb_update_halo!(temperature_pop, comm)
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_update!(:z, density_pop) # needed if not multiple threads in z
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_update!(:z, temperature_pop) # needed if not multiple threads in z
-        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, density_pop)
-        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_update!(:y, temperature_pop)
-        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_update!(:x, density_pop)
-        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_update!(:x, temperature_pop)
+        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(density_pop) # needed if not multiple threads in z
+        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(temperature_pop) # needed if not multiple threads in z
+        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(density_pop)
+        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(temperature_pop)
+        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(density_pop)
+        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(temperature_pop)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
@@ -178,9 +179,9 @@ function lb()
 
         
     end
-    if do_vis && me == 0
-        run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
-    end
+    # if do_vis && me == 0
+    #     # run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
+    # end
     finalize_global_grid()
 end
 
