@@ -7,7 +7,7 @@ using LinearAlgebra
 using Plots
 using ParallelStencil
 
-@init_parallel_stencil(CUDA, Float64, 3, inbounds=false)
+@init_parallel_stencil(Threads, Float64, 3, inbounds=false)
 
 const method = :D3Q19
 
@@ -66,32 +66,8 @@ function lb()
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
 
-    visdir = "visdir"
-    st = ceil(Int, Nx / 10)
-    ENV["GKSwstype"]="nul"
-    if (me==0) if isdir("$visdir")==false mkdir("$visdir") end; loadpath="$visdir/"; anim=Animation(loadpath,String[]); println("Animation directory: $(anim.dir)") end
-    Nx_v, Ny_v, Nz_v = (Nx) * dims[1], (Ny) * dims[2], (Nz) * dims[3]
-    (2 * Nx_v * Ny_v * Nz_v * sizeof(Data.Number) > 0.8 * Sys.free_memory()) && error("Not enough memory for visualization.")
-    density_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
-    temperature_v = zeros(Nx_v, Ny_v, Nz_v) # global array for visu
-    xi_g, yi_g = LinRange(0, lx, Nx_v), LinRange(0, ly, Ny_v) # inner points only
-    iframe = 0
-    Xc, Yc = [x for x in xi_g, _ in yi_g], [y for _ in xi_g, y in yi_g]
-    Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
-
-    for i in timesteps
-        if me == 0
-            dens = heatmap(xi_g, yi_g, Array(density[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-            # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
-
-            temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-            # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
-
-            p = plot(dens, temp)
-            png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-            save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
-            save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
-        end
+    
+    for _ in timesteps
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
         @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary, lx, ly, R)
 

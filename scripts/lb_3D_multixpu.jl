@@ -129,8 +129,8 @@ function lb()
 
                 p = plot(dens, temp)
                 png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density_v))
-                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature_v))
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature))
             end
         end
 
@@ -143,8 +143,8 @@ function lb()
 
         # lb_update_halo!(density_pop, comm)
         # lb_update_halo!(temperature_pop, comm)
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(density_pop) # needed if not multiple threads in z
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(temperature_pop) # needed if not multiple threads in z
+        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(density_pop)
+        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(temperature_pop)
         @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(density_pop)
         @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(temperature_pop)
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(density_pop)
@@ -179,9 +179,12 @@ function lb()
 
         
     end
-    # if do_vis && me == 0
-    #     # run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
-    # end
+    if do_vis && me == 0
+        run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
+    end
+
+    save_array("../test/out_test_density", density)
+    save_array("../test/out_test_temperature", temperature)
     finalize_global_grid()
 end
 
