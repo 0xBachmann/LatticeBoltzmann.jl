@@ -70,9 +70,9 @@ function lb()
 
 
     do_vis = true
-    nvis = 10
+    nvis = 1
     visdir = "visdir"
-    st = ceil(Int, Nx / 10)
+    st = ceil(Int, Nx / 20)
     
     @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, temperature, boundary, U_init)
     
@@ -106,15 +106,15 @@ function lb()
         if do_vis && (i % nvis == 0)
             # gather!(density, density_v)
             # gather!(temperature, temperature_v)
-            # vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2)), 1:2])
+            # vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2))])
             # for i in axes(vel_c, 1)
             #     for j in axes(vel_c, 2)
-            #         vel_c[i, j, :] /= norm(vel_c[i, j, :])
+            #         vel_c[i, j] /= norm(vel_c[i, j])
             #     end
             # end
 
-            # velx_p = vel_c[1:st:end, 1:st:end, 1]
-            # vely_p = vel_c[1:st:end, 1:st:end, 2]
+            # velx_p = Data.Array([@index vel_c[1, i, j] for i in 1:st:Nx for j in 1:st:Ny])
+            # vely_p = Data.Array([@index vel_c[2, i, j] for i in 1:st:Nx for j in 1:st:Ny])
             # velx_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 1], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 1], 2) * dims[2])
             # vely_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 2], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 2], 2) * dims[2])
             # gather!(velx_p, velx_p_g)
@@ -122,10 +122,10 @@ function lb()
 
             if me == 0
                 dens = heatmap(xi_g, yi_g, Array(density[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
-                # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+                # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
                 temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
-                # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p_g[:], vely_p_g[:]), lw=0.5, c=:black)
+                # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
                 p = plot(dens, temp)
                 png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
@@ -149,6 +149,12 @@ function lb()
         @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(temperature_pop)
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(density_pop)
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(temperature_pop)
+
+        @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
+        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
+        @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_y!(temperature_pop, velocity, temperature, 1., 0.)
+        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
+        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
@@ -174,9 +180,6 @@ function lb()
 
         density_pop, density_buf = density_buf, density_pop
         temperature_pop, temperature_buf = temperature_buf, temperature_pop 
-
-
-
         
     end
     if do_vis && me == 0
