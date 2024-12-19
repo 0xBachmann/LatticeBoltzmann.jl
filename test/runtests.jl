@@ -63,16 +63,16 @@ function lb()
     
     @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, temperature, boundary, U_init)
     
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
+    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_density_pop!(density_pop, velocity, density)
+    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_temperature_pop!(temperature_pop, velocity, temperature)
 
     
     for _ in timesteps
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
         @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary, lx, ly, R)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_density!(density_pop, velocity, density, _τ_density)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
 
         @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(density_pop)
         @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(temperature_pop)

@@ -76,8 +76,8 @@ function lb()
     
     @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, temperature, boundary, U_init)
     
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(density_pop, velocity, density)
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_pop!(temperature_pop, velocity, temperature)
+    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_density_pop!(density_pop, velocity, density)
+    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_temperature_pop!(temperature_pop, velocity, temperature)
 
     # # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, density_pop, density_buf)
     # # @parallel (1:Nx, 1:Ny) periodic_boundary_update!(:z, temperature_pop, temperature_buf)
@@ -137,8 +137,8 @@ function lb()
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
         @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary, lx, ly, R)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(density_pop, velocity, density, _τ_density)
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision!(temperature_pop, velocity, temperature, _τ_temperature)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_density!(density_pop, velocity, density, _τ_density)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
 
 
         # lb_update_halo!(density_pop, comm)
@@ -150,9 +150,9 @@ function lb()
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(density_pop)
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(temperature_pop)
 
-        @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
+        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
         # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
-        @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_y!(temperature_pop, velocity, temperature, 1., 0.)
+        # @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_y!(temperature_pop, velocity, temperature, 1., 0.)
         # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
         # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
 
@@ -185,9 +185,6 @@ function lb()
     if do_vis && me == 0
         run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
     end
-
-    save_array("../test/out_test_density", density)
-    save_array("../test/out_test_temperature", temperature)
     finalize_global_grid()
 end
 

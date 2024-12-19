@@ -49,10 +49,18 @@ end
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
 
-@parallel_indices (i, j, k) function collision!(pop, velocity, values, _τ)
+@parallel_indices (i, j, k) function collision_density!(pop, velocity, density, _τ)
     v = velocity[i-1, j-1, k-1]
     for q in 1:Q
-        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, values[i-1, j-1, k-1])
+        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, density[i-1, j-1, k-1])
+    end
+    return
+end
+
+@parallel_indices (i, j, k) function collision_temperature!(pop, velocity, temperature, _τ)
+    v = velocity[i-1, j-1, k-1]
+    for q in 1:Q
+        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * temp_eq(q, v, temperature[i-1, j-1, k-1])
     end
     return
 end
@@ -203,57 +211,57 @@ end
     return
 end
 
-@parallel_indices (j, k) function anti_bounce_back_x!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
+@parallel_indices (j, k) function anti_bounce_back_temperature_x!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
     Nx = size(pop, 1)
     for q in 1:Q
         yidx = j + directions[q][2]
         zidx = k + directions[q][3]
         if directions[q][1] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -f_eq(q, velocity[Nx - 2, j - 1, k - 1], values[Nx - 2, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value_r
+            value = -temp_eq(q, velocity[Nx - 2, j - 1, k - 1], values[Nx - 2, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value_r
             @index pop[flipped_dir, Nx, yidx, zidx] = value
         end
         if directions[q][1] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -f_eq(q, velocity[1, j - 1, k - 1], values[1, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
+            value = -temp_eq(q, velocity[1, j - 1, k - 1], values[1, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
             @index pop[flipped_dir, 1, yidx, zidx] = value
         end
     end
     return
 end
 
-@parallel_indices (i, k) function anti_bounce_back_y!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
+@parallel_indices (i, k) function anti_bounce_back_temperature_y!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
     Ny = size(pop, 2)
     for q in 1:Q
         xidx = i + directions[q][1]
         zidx = k + directions[q][3]
         if directions[q][2] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -f_eq(q, velocity[i - 1, Ny - 2, k - 1], values[i - 1, Ny - 2, k - 1]) + 2 * weights[q] * dirichlet_value_r
+            value = -temp_eq(q, velocity[i - 1, Ny - 2, k - 1], values[i - 1, Ny - 2, k - 1]) + 2 * weights[q] * dirichlet_value_r
             @index pop[flipped_dir, xidx, Ny, zidx] = value
         end
         if directions[q][2] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -f_eq(q, velocity[i - 1, 1, k - 1], values[i - 1, 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
+            value = -temp_eq(q, velocity[i - 1, 1, k - 1], values[i - 1, 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
             @index pop[flipped_dir, xidx, 1, zidx] = value
         end
     end
     return
 end
 
-@parallel_indices (i, j) function anti_bounce_back_z!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
+@parallel_indices (i, j) function anti_bounce_back_temperature_z!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
     Nx = size(pop, 1)
     for q in 1:Q
         xidx = i + directions[q][1]
         yidx = j + directions[q][2]
         if directions[q][3] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -f_eq(q, velocity[i - 1, j - 1, Nz - 2], values[i - 1, j - 1, Nz - 2]) + 2 * weights[q] * dirichlet_value_r
+            value = -temp_eq(q, velocity[i - 1, j - 1, Nz - 2], values[i - 1, j - 1, Nz - 2]) + 2 * weights[q] * dirichlet_value_r
             @index pop[flipped_dir, xidx, yidx, Nz] = value
         end
         if directions[q][3] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -f_eq(q, velocity[i - 1, j - 1, 1], values[i - 1, j - 1, 1]) + 2 * weights[q] * dirichlet_value_l
+            value = -temp_eq(q, velocity[i - 1, j - 1, 1], values[i - 1, j - 1, 1]) + 2 * weights[q] * dirichlet_value_l
             @index pop[flipped_dir, xidx, yidx, 1] = value
         end
     end
@@ -358,18 +366,31 @@ end
     return
 end
 
-@views function f_eq(q, velocity, density)
+@inline function f_eq(q, velocity, density)
     uc = dot(velocity, directions[q])
     uc2 = uc^2
     u2 = norm(velocity) ^ 2
     return weights[q] * density * (1. + uc * _cs2 + 0.5 * uc2 * _cs4 - 0.5 * u2 * _cs2)
 end
 
-@parallel_indices (i, j, k) function init_pop!(pop, velocity, values)
+@inline function temp_eq(q, velocity, temperature)
+    uc = dot(velocity, directions[q])
+    return weights[q] * temperature * (1. + uc * _cs2)
+end
+
+@parallel_indices (i, j, k) function init_density_pop!(density_pop, velocity, values)
     for q in 1:Q
-        @index pop[q, i, j, k] = f_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
+        @index density_pop[q, i, j, k] = f_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
     end
     return
+end
+
+@parallel_indices (i, j, k) function init_temperature_pop!(temperature_pop, velocity, values)
+for q in 1:Q
+    @index temperature_pop[q, i, j, k] = temp_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
+end
+
+return
 end
 
 @views function lb_update_halo!(pop, comm)
