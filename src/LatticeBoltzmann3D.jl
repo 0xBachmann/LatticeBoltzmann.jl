@@ -49,10 +49,10 @@ end
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
 
-@parallel_indices (i, j, k) function collision_density!(pop, velocity, density, _τ)
+@parallel_indices (i, j, k) function collision_density!(pop, velocity, density, forces, _τ)
     v = velocity[i-1, j-1, k-1]
     for q in 1:Q
-        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, density[i-1, j-1, k-1])
+        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, forces[i-1, j-1, k-1], _τ)
     end
     return
 end
@@ -333,16 +333,21 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function init!(velocity, temperature, boundary, U_init)    
+@parallel_indices (i, j, k) function init!(velocity, temperature, boundary, U_init, ΔT)    
     if boundary[i, j, k] == 0.
         velocity[i, j, k] = U_init
     else 
         temperature[i, j, k] = 1.
     end
+    # if j == 1
+    #     temperature[i, j, k] = ΔT / 2
+    # elseif j == size(temperature, 2)
+    #     temperature[i, j, k] = -ΔT / 2
+    # end
     return
 end
 
-@parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop)
+@parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
     cell_density = 0.
     cell_velocity = @SVector zeros(3)
     cell_temperature = 0.
@@ -352,8 +357,8 @@ end
         cell_velocity += directions[q] * @index density_pop[q, i + 1, j + 1, k + 1]
     end
 
-    cell_velocity /= cell_density
-    velocity[i, j, k] = cell_velocity
+    cell_velocity += forces[i, j, k] / 2
+    velocity[i, j, k] = cell_velocity / cell_density
     density[i, j, k] = cell_density
     temperature[i, j, k] = cell_temperature
     return
@@ -373,9 +378,19 @@ end
     return weights[q] * density * (1. + uc * _cs2 + 0.5 * uc2 * _cs4 - 0.5 * u2 * _cs2)
 end
 
+@inline function source_term(q, velocity, force, _τ)
+    cf = dot(directions[q], force)
+    return (1. - _τ / 2) * weights[q] * (cf * _cs2 + cf * dot(directions[q], velocity) * _cs4 - dot(velocity, force) * _cs2)
+end
+
+
 @inline function temp_eq(q, velocity, temperature)
     uc = dot(velocity, directions[q])
-    return weights[q] * temperature * (1. + uc * _cs2)
+    uc2 = uc^2
+    u2 = norm(velocity) ^ 2
+    return weights[q] * temperature * (1. + uc * _cs2 + 0.5 * uc2 * _cs4 - 0.5 * u2 * _cs2)
+    # uc = dot(velocity, directions[q])
+    # return weights[q] * temperature * (1. + uc * _cs2)
 end
 
 @parallel_indices (i, j, k) function init_density_pop!(density_pop, velocity, values)
@@ -386,11 +401,10 @@ end
 end
 
 @parallel_indices (i, j, k) function init_temperature_pop!(temperature_pop, velocity, values)
-for q in 1:Q
-    @index temperature_pop[q, i, j, k] = temp_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
-end
-
-return
+    for q in 1:Q
+        @index temperature_pop[q, i, j, k] = temp_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
+    end
+    return
 end
 
 @views function lb_update_halo!(pop, comm)
@@ -495,5 +509,10 @@ end
         end
     end
     MPI.Barrier(comm)
+    return
+end
+
+@parallel_indices (i, j, k) function compute_force!(forces, temperature, gravity, α, ρ_0)
+    forces[i, j, k] = -α * ρ_0 * temperature[i, j, k] .* gravity
     return
 end

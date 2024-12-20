@@ -56,17 +56,26 @@ function lb()
 
     _τ_temperature = 1. / (D * _cs2 + 0.5)
     _τ_density = 1. / (viscosity * _cs2 + 0.5)
+    Δt = 1. # lattice units
+
+    α = 0.05
+    ρ_0 = 1.
+    gravity = @SVector [0., -1., 0]
 
     nt = 1000
     timesteps = 0:nt
 
     R = lx / 4
     U_init = @SVector [0., 0.2, 0.]
+    ΔT = 0.5
 
     velocity = @zeros(Nx, Ny, Nz, celldims=3)
+    forces = @zeros(Nx, Ny, Nz, celldims=3)
     density = @ones(Nx, Ny, Nz)
     boundary = Data.Array([((x_g(ix, dx, density) - lx / 2)^2 + (y_g(iy, dy, density) - ly / 3) ^2) < R^2 ? 1. : 0. for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
-    temperature = @zeros(Nx, Ny, Nz)
+    temperature = @zeros(Nx, Ny, Nz) # Data.Array([ΔT * exp(-(x_g(ix, dx, density) - lx / 2)^2
+    #                                     -(y_g(iy, dy, density) - ly / 2)^2
+    #                                     -(z_g(iz, dz, density) - lz / 2)^2) for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
 
 
     do_vis = true
@@ -74,7 +83,7 @@ function lb()
     visdir = "visdir"
     st = ceil(Int, Nx / 20)
     
-    @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, temperature, boundary, U_init)
+    @parallel (1:Nx, 1:Ny, 1:Nz) init!(velocity, temperature, boundary, U_init, ΔT)
     
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_density_pop!(density_pop, velocity, density)
     @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_temperature_pop!(temperature_pop, velocity, temperature)
@@ -134,10 +143,21 @@ function lb()
             end
         end
 
-        @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop)
+        # collision_temperature
+        # boundary condition temperature
+        # streaming temperature
+        # update temperature
+
+        # compute buoyancy force
+        # collision density, taking force into account
+        # boundary condition density
+        # streaming density
+        # update velocity and density
+        @parallel (1:Nx, 1:Ny, 1:Nz) compute_force!(forces, temperature, gravity, α, ρ_0)
+        @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
         @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary, lx, ly, R)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_density!(density_pop, velocity, density, _τ_density)
+        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_density!(density_pop, velocity, density, forces, _τ_density)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
 
 
@@ -150,11 +170,11 @@ function lb()
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(density_pop)
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(temperature_pop)
 
-        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
-        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
-        # @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_y!(temperature_pop, velocity, temperature, 1., 0.)
-        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
-        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
+        @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
+        @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
+        # @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_temperature_y!(temperature_pop, velocity, temperature, -ΔT/2, ΔT)
+        @parallel (2:Ny+1, 2:Nz+1) bounce_back_x!(density_pop)
+        @parallel (2:Ny+1, 2:Nz+1) bounce_back_x!(temperature_pop)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
