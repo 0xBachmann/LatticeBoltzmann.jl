@@ -334,16 +334,16 @@ end
 end
 
 @parallel_indices (i, j, k) function init!(velocity, temperature, boundary, U_init, ΔT)    
-    if boundary[i, j, k] == 0.
-        velocity[i, j, k] = U_init
-    else 
-        temperature[i, j, k] = 1.
-    end
-    # if j == 1
-    #     temperature[i, j, k] = ΔT / 2
-    # elseif j == size(temperature, 2)
-    #     temperature[i, j, k] = -ΔT / 2
+    # if boundary[i, j, k] == 0.
+    #     velocity[i, j, k] = U_init
+    # else 
+    #     temperature[i, j, k] = 1.
     # end
+    if j == 1
+        temperature[i, j, k] = ΔT / 2
+    elseif j == size(temperature, 2)
+        temperature[i, j, k] = -ΔT / 2
+    end
     return
 end
 
@@ -364,7 +364,7 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function apply_external_force!(velocity, boundary, lx, ly, R)
+@parallel_indices (i, j, k) function apply_external_force!(velocity, boundary)
     if boundary[i, j, k] != 0.
         velocity[i, j, k] = @SVector zeros(3)
     end

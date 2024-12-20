@@ -33,14 +33,14 @@ function save_array(Aname, A)
 end
 
 function lb()
-    Nx = 40
-    Ny = 70
+    Nx = 80
+    Ny = 40
     Nz = 3
 
     me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz=1, periodx=1, periody=1)
 
-    lx = 40
-    ly = 70
+    lx = 20
+    ly = 10
     lz = 3
 
     dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
@@ -58,7 +58,7 @@ function lb()
     _τ_density = 1. / (viscosity * _cs2 + 0.5)
     Δt = 1. # lattice units
 
-    α = 0.05
+    α = 0.04
     ρ_0 = 1.
     gravity = @SVector [0., -1., 0]
 
@@ -67,15 +67,16 @@ function lb()
 
     R = lx / 4
     U_init = @SVector [0., 0.2, 0.]
-    ΔT = 0.5
+    ΔT = 1.
 
     velocity = @zeros(Nx, Ny, Nz, celldims=3)
     forces = @zeros(Nx, Ny, Nz, celldims=3)
     density = @ones(Nx, Ny, Nz)
-    boundary = Data.Array([((x_g(ix, dx, density) - lx / 2)^2 + (y_g(iy, dy, density) - ly / 3) ^2) < R^2 ? 1. : 0. for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
-    temperature = @zeros(Nx, Ny, Nz) # Data.Array([ΔT * exp(-(x_g(ix, dx, density) - lx / 2)^2
-    #                                     -(y_g(iy, dy, density) - ly / 2)^2
-    #                                     -(z_g(iz, dz, density) - lz / 2)^2) for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
+    boundary = @zeros(Nx, Ny, Nz) # Data.Array([((x_g(ix, dx, density) - lx / 2)^2 + (y_g(iy, dy, density) - ly / 3) ^2) < R^2 ? 1. : 0. for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
+    temperature = Data.Array([ΔT * exp(-(x_g(ix, dx, density) - lx / 2)^2
+                                        -(y_g(iy, dy, density) - ly / 2)^2
+                                        # -(z_g(iz, dz, density) - lz / 2)^2
+                                        ) for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
 
 
     do_vis = true
@@ -133,7 +134,7 @@ function lb()
                 dens = heatmap(xi_g, yi_g, Array(density[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
                 # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
-                temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="temperature")
+                temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(-ΔT/2,ΔT/2), title="temperature")
                 # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
                 p = plot(dens, temp)
@@ -171,8 +172,8 @@ function lb()
         @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(temperature_pop)
 
         @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(density_pop)
-        @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
-        # @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_temperature_y!(temperature_pop, velocity, temperature, -ΔT/2, ΔT)
+        # @parallel (2:Nx+1, 2:Nz+1) bounce_back_y!(temperature_pop)
+        @parallel (2:Nx+1, 2:Nz+1) anti_bounce_back_temperature_y!(temperature_pop, velocity, temperature, ΔT/2, -ΔT/2)
         @parallel (2:Ny+1, 2:Nz+1) bounce_back_x!(density_pop)
         @parallel (2:Ny+1, 2:Nz+1) bounce_back_x!(temperature_pop)
 
