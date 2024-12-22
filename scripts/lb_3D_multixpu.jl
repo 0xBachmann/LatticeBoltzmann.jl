@@ -33,8 +33,8 @@ function save_array(Aname, A)
 end
 
 function lb()
-    Nx = 80
-    Ny = 40
+    Nx = 40
+    Ny = 20
     Nz = 3
 
     me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz=1, periodx=1, periody=1)
@@ -51,23 +51,29 @@ function lb()
     temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
     temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
 
-    D = 1e-2
+    D = 6e-3
     viscosity = 5e-2
 
     _τ_temperature = 1. / (D * _cs2 + 0.5)
     _τ_density = 1. / (viscosity * _cs2 + 0.5)
+    @show 1/_τ_density, 1/_τ_temperature
     Δt = 1. # lattice units
 
-    α = 0.04
+    α = 0.0003
     ρ_0 = 1.
-    gravity = @SVector [0., -1., 0]
+    gravity = @SVector [0., -1., 0] # g = g⋆ * Δx/Δt^2
 
-    nt = 1000
+    nt = 10000
     timesteps = 0:nt
+
 
     R = lx / 4
     U_init = @SVector [0., 0.2, 0.]
     ΔT = 1.
+
+    # Ra = α * norm(gravity) * ΔT * ly^3 / (viscosity * k)
+    @show(α * norm(gravity) * ΔT * ly^3 / (viscosity * 10)) # eq 8.43 <-- right now these are not unit values?
+
 
     velocity = @zeros(Nx, Ny, Nz, celldims=3)
     forces = @zeros(Nx, Ny, Nz, celldims=3)
@@ -80,7 +86,7 @@ function lb()
 
 
     do_vis = true
-    nvis = 1
+    nvis = 10
     visdir = "visdir"
     st = ceil(Int, Nx / 20)
     
@@ -137,7 +143,7 @@ function lb()
                 temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil((Nz-2)/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(-ΔT/2,ΔT/2), title="temperature")
                 # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
-                p = plot(dens, temp)
+                p = plot(dens, temp, layout=(2, 1))
                 png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
                 save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density))
                 save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature))
@@ -154,9 +160,10 @@ function lb()
         # boundary condition density
         # streaming density
         # update velocity and density
+
         @parallel (1:Nx, 1:Ny, 1:Nz) compute_force!(forces, temperature, gravity, α, ρ_0)
         @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
-        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary, lx, ly, R)
+        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary)
 
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_density!(density_pop, velocity, density, forces, _τ_density)
         @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
