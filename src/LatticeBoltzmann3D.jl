@@ -249,6 +249,23 @@ end
     return
 end
 
+@parallel_indices (i, k) function anti_bounce_back_temperature_y!(lb, rb, pop, pop_buf, velocity, values, dirichlet_value_l, dirichlet_value_r) 
+    Ny = size(pop, 2)
+    for q in 1:Q
+        if rb && directions[q][2] == 1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            value = -temp_eq(q, velocity[i - 1, Ny - 2, k - 1], values[i - 1, Ny - 2, k - 1]) + 2 * weights[q] * dirichlet_value_r
+            @index pop_buf[flipped_dir, i, Ny - 1, k] = value
+        end
+        if lb && directions[q][2] == -1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            value = -temp_eq(q, velocity[i - 1, 1, k - 1], values[i - 1, 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
+            @index pop_buf[flipped_dir, i, 2, k] = value
+        end
+    end
+    return
+end
+
 @parallel_indices (i, j) function anti_bounce_back_temperature_z!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
     Nx = size(pop, 1)
     for q in 1:Q
@@ -287,6 +304,23 @@ end
     return
 end
 
+@parallel_indices (j, k) function bounce_back_x!(lb, rb, pop, pop_buf)
+    Nx = size(pop, 1)
+    for q in 1:Q
+        if rb && directions[q][1] == 1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            flipped_value = @index pop[q, Nx-1, j, k]
+            @index pop_buf[flipped_dir, Nx-1, j, k] = flipped_value
+        end
+        if lb && directions[q][1] == -1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            flipped_value = @index pop[q, 2, j, k]
+            @index pop_buf[flipped_dir, 2, j, k] = flipped_value
+        end
+    end   
+    return
+end
+
 @parallel_indices (i, k) function bounce_back_y!(pop)
     Ny = size(pop, 2)
     for q in 1:Q
@@ -301,6 +335,23 @@ end
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, i, 2, k]
             @index pop[flipped_dir, xidx, 1, zidx] = flipped_value
+        end
+    end   
+    return
+end
+
+@parallel_indices (i, k) function bounce_back_y!(lb, rb, pop, pop_buf)
+    Ny = size(pop, 2)
+    for q in 1:Q
+        if rb && directions[q][2] == 1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            flipped_value = @index pop[q, i, Ny - 1, k]
+            @index pop_buf[flipped_dir, i, Ny - 1, k] = flipped_value
+        end
+        if lb && directions[q][2] == -1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            flipped_value = @index pop[q, i, 2, k]
+            @index pop_buf[flipped_dir, i, 2, k] = flipped_value
         end
     end   
     return
@@ -325,6 +376,23 @@ end
     return
 end
 
+@parallel_indices (i, j) function bounce_back_z!(lb, rb, pop, pop_buf)
+    Nz = size(pop, 3)
+    for q in 1:Q
+        if rb && directions[q][3] == 1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            flipped_value = @index pop[q, i, j, Nz - 1]
+            @index pop_buf[flipped_dir, i, j, Nz - 1] = flipped_value
+        end
+        if lb && directions[q][3] == -1
+            flipped_dir = (q%2 == 0) ? q+1 : q-1
+            flipped_value = @index pop[q, i, j, 2]
+            @index pop_buf[flipped_dir, i, j, 2] = flipped_value
+        end
+    end   
+    return
+end
+
 
 @parallel_indices (i, j, k) function streaming!(pop, pop_buf)
     for q in 1:Q
@@ -333,15 +401,16 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function init!(velocity, temperature, boundary, U_init, ΔT)    
+@parallel_indices (i, j, k) function init!(left_boundary, right_boundary, velocity, temperature, boundary, U_init, ΔT)    
     # if boundary[i, j, k] == 0.
     #     velocity[i, j, k] = U_init
     # else 
     #     temperature[i, j, k] = 1.
     # end
-    if j == 1
+
+    if left_boundary && j == 1
         temperature[i, j, k] = ΔT / 2
-    elseif j == size(temperature, 2)
+    elseif right_boundary && j == size(temperature, 2)
         temperature[i, j, k] = -ΔT / 2
     end
     return
