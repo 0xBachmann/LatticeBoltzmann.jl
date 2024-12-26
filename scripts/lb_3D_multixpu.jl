@@ -164,8 +164,8 @@ function lb()
 
                 p = plot(dens, temp, layout=(2, 1))
                 png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, density))
-                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, temperature))
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(density_v)))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(temperature_v)))
             end
         end
 
