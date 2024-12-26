@@ -65,254 +65,109 @@ end
     return
 end
 
-@views function dirichlet_boundary!(boundary, pop, velocity, values)
-    if boundary == :xupper
-        x = size(pop, 1)
-        for j in axes(pop, 2)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
-                for q in 1:Q
-                    pop[x, j, k, q] = f_eq(q, velocity, values[x, j, k])
-                end      
-            end               
-        end
-    elseif  boundary == :zlower
-        z = 1
-        for i in axes(pop, 1)[2:end-1]
-            for j in axes(pop, 2)[2:end-1]
-                for q in 1:Q
-                    pop[i, j, z, q] = f_eq(q, velocity, values[i, j, z])
-                end
-            end
-        end
-    elseif boundary == :ylower
-        y = 1
-        for i in axes(pop, 1)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
-                for q in 1:Q
-                    pop[i, y, k, q] = f_eq(q, velocity, values[i, y, k])
-                end      
-            end      
-        end
-    elseif boundary == :yupper
-        y = size(pop, 2)
-        for i in axes(pop, 1)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
-                for q in 1:Q
-                    pop[i, y, k, q] = f_eq(q, velocity, values[i, y, k])
-                end      
-            end           
-        end
-    elseif boundary == :xlower
-        x = 1
-        for j in axes(pop, 2)[2:end-1]
-            for k in axes(pop, 3)[2:end-1]
-                for q in 1:Q
-                    pop[x, j, k, q] = f_eq(q, velocity, values[x, j, k])
-                end      
-            end      
-        end
-    elseif boundary == :zupper
-        z = size(popo, 3)
-        for i in axes(pop, 1)[2:end-1]
-            for j in axes(pop, 2)[2:end-1]
-                for q in 1:Q
-                    pop[i, j, z] = f_eq(q, velocity, values[i, j, z])
-                end
-            end
-        end
-    end
-end
-
 @parallel_indices (i, j) function periodic_boundary_x!(pop)
     Nx = size(pop, 1)
-        # for q in 1:Q
-        #     yidx = mod(i - directions[q][2] - 1, Ny) + 1
-        #     zidx = mod(j - directions[q][3] - 1, Nz) + 1
-            # if directions[q][1] == 1
-                pop[1, i, j] = pop[Nx-1, i, j]
-            # elseif directions[q][1] == -1
-                pop[Nx, i, j] = pop[2, i, j]
-            # end
-        # end   
+    pop[1, i, j] = pop[Nx-1, i, j]
+    pop[Nx, i, j] = pop[2, i, j]
     return
 end
 @parallel_indices (i, k) function periodic_boundary_y!(pop)
     Ny = size(pop, 2)
-        # for q in 1:Q
-        #     xidx = mod(i - directions[q][1] - 1, Nx) + 1
-        #     zidx = mod(j - directions[q][3] - 1, Nz) + 1
-            # if directions[q][2] == 1
-                pop[i, 1, k] = pop[i, Ny-1, k]
-            # elseif directions[q][2] == -1
-                pop[i, Ny, k] = pop[i, 2, k]
-            # end
-        # end 
+    pop[i, 1, k] = pop[i, Ny-1, k]
+    pop[i, Ny, k] = pop[i, 2, k]
     return
 end
 @parallel_indices (i, j) function periodic_boundary_z!(pop)
     Nz = size(pop, 3)
-
-        # for q in 1:Q
-        #     xidx = mod(i - directions[q][1] - 1, Nx) + 1
-        #     yidx = mod(j - directions[q][2] - 1, Ny) + 1
-            # if directions[q][3] == 1
-                pop[i, j, 1] = pop[i, j, Nz-1]
-            # elseif directions[q][3] == -1
-                pop[i, j, Nz] = pop[i, j, 2]
-            # end
-        # end
+    pop[i, j, 1] = pop[i, j, Nz-1]
+    pop[i, j, Nz] = pop[i, j, 2]
     return
 end
 
-
-@parallel_indices (i, j) function inlet_boundary_conditions!(dimension, pop, pop_buf, U_inlet, values)
-    if dimension == :x
-        lx = 2
-        rx = size(pop, 1) - 1
-        for q in 1:Q
-            if directions[q][1] == 1
-                pop_buf[rx, i, j, q] = pop[rx, i, j, (q%2 == 0) ? q+1 : q-1] - 2 * _cs2 * weights[q] * values[rx - 1, i - 1, j - 1] * dot(U_inlet, directions[q])
-            elseif directions[q][1] == -1
-                pop_buf[lx, i, j, q] = pop[lx, i, j, (q%2 == 0) ? q+1 : q-1] - 2 * _cs2 * weights[q] * values[lx - 1, i - 1, j - 1] * dot(U_inlet, directions[q])
-            end
-        end   
-    elseif dimension == :y
-        ly = 2
-        ry = size(pop, 2) - 1
-        n = @zeros(3)
-        n[2] = -1
-        for q in 1:Q   
-            ci = -directions[q]
-            ti = ci - dot(ci, n) * n 
-            corr = 0
-            for qq in 1:Q
-                cj = directions[qq]
-                corr += pop[i, ly, j, qq] * dot(ti, cj) * (1 - abs(dot(cj, n)))
-            end
-            corr /= 2
-            # if directions[q][2] == 1
-            #     pop_buf[i, ry, j, q] = pop[i, ry, j, (q%2 == 0) ? q+1 : q-1] - 2 * _cs2 * weights[q] * values[i - 1, ry - 1, j - 1] * dot(U_inlet, directions[q])
-            # else
-            if directions[q][2] == -1
-                pop_buf[i, ly, j, q] = pop[i, ly, j, (q%2 == 0) ? q+1 : q-1] - values[i-1, ry-1, j-1] * (dot(ci, U_inlet) / 2 + dot(ti, U_inlet)) / 6 + corr 
-            end    
-        end
-    elseif dimension == :z
-        lz = 2
-        rz = size(pop, 3) - 1
-        for q in 1:Q
-            if directions[q][3] == 1 
-                pop_buf[i, j, rz, q] = pop[i, j, rz, (q%2 == 0) ? q+1 : q-1] - 2 * _cs2 * weights[q] * values[i - 1, j - 1, rz - 1] * dot(U_inlet, directions[q])
-            elseif directions[q][3] == -1
-                pop_buf[i, j, lz, q] = pop[i, j, lz, (q%2 == 0) ? q+1 : q-1] - 2 * _cs2 * weights[q] * values[i - 1, j - 1, lz - 1] * dot(U_inlet, directions[q])
-            end
-        end
-    end
-    return
-end
-
-@parallel_indices (j, k) function anti_bounce_back_temperature_x!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
+@parallel_indices (j, k) function anti_bounce_back_temperature_x_right!(pop, pop_buf, velocity, values, dirichlet_value) 
     Nx = size(pop, 1)
     for q in 1:Q
-        yidx = j + directions[q][2]
-        zidx = k + directions[q][3]
         if directions[q][1] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[Nx - 2, j - 1, k - 1], values[Nx - 2, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value_r
-            @index pop[flipped_dir, Nx, yidx, zidx] = value
+            value = -temp_eq(q, velocity[Nx - 2, j - 1, k - 1], values[Nx - 2, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value
+            @index pop_buf[flipped_dir, Nx - 1, j, k] = value
         end
+    end 
+    return
+end
+
+@parallel_indices (j, k) function anti_bounce_back_temperature_x_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+    for q in 1:Q
         if directions[q][1] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[1, j - 1, k - 1], values[1, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
-            @index pop[flipped_dir, 1, yidx, zidx] = value
+            value = -temp_eq(q, velocity[1, j - 1, k - 1], values[1, j - 1, k - 1]) + 2 * weights[q] * dirichlet_value
+            @index pop_buf[flipped_dir, 2, j, k] = value
         end
     end
     return
 end
 
-@parallel_indices (i, k) function anti_bounce_back_temperature_y!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
+@parallel_indices (i, k) function anti_bounce_back_temperature_y_right!(pop, pop_buf, velocity, values, dirichlet_value) 
     Ny = size(pop, 2)
     for q in 1:Q
-        xidx = i + directions[q][1]
-        zidx = k + directions[q][3]
         if directions[q][2] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[i - 1, Ny - 2, k - 1], values[i - 1, Ny - 2, k - 1]) + 2 * weights[q] * dirichlet_value_r
-            @index pop[flipped_dir, xidx, Ny, zidx] = value
-        end
-        if directions[q][2] == -1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[i - 1, 1, k - 1], values[i - 1, 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
-            @index pop[flipped_dir, xidx, 1, zidx] = value
+            value = -temp_eq(q, velocity[i - 1, Ny - 2, k - 1], values[i - 1, Ny - 2, k - 1]) + 2 * weights[q] * dirichlet_value
+            @index pop_buf[flipped_dir, i, Ny - 1, k] = value
         end
     end
     return
 end
 
-@parallel_indices (i, k) function anti_bounce_back_temperature_y!(lb, rb, pop, pop_buf, velocity, values, dirichlet_value_l, dirichlet_value_r) 
-    Ny = size(pop, 2)
+@parallel_indices (i, k) function anti_bounce_back_temperature_y_left!(pop, pop_buf, velocity, values, dirichlet_value) 
     for q in 1:Q
-        if rb && directions[q][2] == 1
+        if directions[q][2] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[i - 1, Ny - 2, k - 1], values[i - 1, Ny - 2, k - 1]) + 2 * weights[q] * dirichlet_value_r
-            @index pop_buf[flipped_dir, i, Ny - 1, k] = value
-        end
-        if lb && directions[q][2] == -1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[i - 1, 1, k - 1], values[i - 1, 1, k - 1]) + 2 * weights[q] * dirichlet_value_l
+            value = -temp_eq(q, velocity[i - 1, 1, k - 1], values[i - 1, 1, k - 1]) + 2 * weights[q] * dirichlet_value
             @index pop_buf[flipped_dir, i, 2, k] = value
         end
     end
     return
 end
 
-@parallel_indices (i, j) function anti_bounce_back_temperature_z!(pop, velocity, values, dirichlet_value_l, dirichlet_value_r) 
-    Nx = size(pop, 1)
+@parallel_indices (i, j) function anti_bounce_back_temperature_z_right!(pop, pop_buf, velocity, values, dirichlet_value) 
+    Nz = size(pop, 3)
     for q in 1:Q
-        xidx = i + directions[q][1]
-        yidx = j + directions[q][2]
         if directions[q][3] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[i - 1, j - 1, Nz - 2], values[i - 1, j - 1, Nz - 2]) + 2 * weights[q] * dirichlet_value_r
-            @index pop[flipped_dir, xidx, yidx, Nz] = value
-        end
-        if directions[q][3] == -1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            value = -temp_eq(q, velocity[i - 1, j - 1, 1], values[i - 1, j - 1, 1]) + 2 * weights[q] * dirichlet_value_l
-            @index pop[flipped_dir, xidx, yidx, 1] = value
+            value = -temp_eq(q, velocity[i - 1, j - 1, Nz - 2], values[i - 1, j - 1, Nz - 2]) + 2 * weights[q] * dirichlet_value
+            @index pop_buf[flipped_dir, i, j, Nz - 1] = value
         end
     end
     return
 end
 
-@parallel_indices (j, k) function bounce_back_x!(pop)
-    Nx = size(pop, 1)
+@parallel_indices (i, j) function anti_bounce_back_temperature_z_left!(pop, pop_buf, velocity, values, dirichlet_value) 
     for q in 1:Q
-        yidx = j + directions[q][2]
-        zidx = k + directions[q][3]
-        if directions[q][1] == 1
+        if directions[q][3] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
-            flipped_value = @index pop[q, Nx - 1, j, k]
-            @index pop[flipped_dir, Nx, yidx, zidx] = flipped_value
+            value = -temp_eq(q, velocity[i - 1, j - 1, 1], values[i - 1, j - 1, 1]) + 2 * weights[q] * dirichlet_value
+            @index pop_buf[flipped_dir, i, j, 2] = value
         end
-        if directions[q][1] == -1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            flipped_value = @index pop[q, 2, j, k]
-            @index pop[flipped_dir, 1, yidx, zidx] = flipped_value
-        end
-    end   
+    end
     return
 end
 
-@parallel_indices (j, k) function bounce_back_x!(lb, rb, pop, pop_buf)
+@parallel_indices (j, k) function bounce_back_x_right!(pop, pop_buf)
     Nx = size(pop, 1)
     for q in 1:Q
-        if rb && directions[q][1] == 1
+        if directions[q][1] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, Nx-1, j, k]
             @index pop_buf[flipped_dir, Nx-1, j, k] = flipped_value
         end
-        if lb && directions[q][1] == -1
+    end
+    return
+end
+
+@parallel_indices (j, k) function bounce_back_x_left!(pop, pop_buf)
+    for q in 1:Q
+        if directions[q][1] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, 2, j, k]
             @index pop_buf[flipped_dir, 2, j, k] = flipped_value
@@ -321,34 +176,21 @@ end
     return
 end
 
-@parallel_indices (i, k) function bounce_back_y!(pop)
+@parallel_indices (i, k) function bounce_back_y_right!(pop, pop_buf)
     Ny = size(pop, 2)
     for q in 1:Q
-        xidx = i + directions[q][1]
-        zidx = k + directions[q][3]
         if directions[q][2] == 1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            flipped_value = @index pop[q, i, Ny - 1, k]
-            @index pop[flipped_dir, xidx, Ny, zidx] = flipped_value
-        end
-        if directions[q][2] == -1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            flipped_value = @index pop[q, i, 2, k]
-            @index pop[flipped_dir, xidx, 1, zidx] = flipped_value
-        end
-    end   
-    return
-end
-
-@parallel_indices (i, k) function bounce_back_y!(lb, rb, pop, pop_buf)
-    Ny = size(pop, 2)
-    for q in 1:Q
-        if rb && directions[q][2] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, i, Ny - 1, k]
             @index pop_buf[flipped_dir, i, Ny - 1, k] = flipped_value
         end
-        if lb && directions[q][2] == -1
+    end
+    return
+end
+
+@parallel_indices (i, k) function bounce_back_y_left!(pop, pop_buf)
+    for q in 1:Q
+        if directions[q][2] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, i, 2, k]
             @index pop_buf[flipped_dir, i, 2, k] = flipped_value
@@ -357,34 +199,21 @@ end
     return
 end
 
-@parallel_indices (i, j) function bounce_back_z!(pop)
+@parallel_indices (i, j) function bounce_back_z_right!(pop, pop_buf)
     Nz = size(pop, 3)
     for q in 1:Q
-        xidx = i + directions[q][1]
-        yidx = j + directions[q][2]
         if directions[q][3] == 1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            flipped_value = @index pop[q, i, j, Nz - 1]
-            @index pop[flipped_dir, xidx, yidx, Nz] = flipped_value
-        end
-        if directions[q][3] == -1
-            flipped_dir = (q%2 == 0) ? q+1 : q-1
-            flipped_value = @index pop[q, i, j, 2]
-            @index pop[flipped_dir, xidx, yidx, 1] = flipped_value
-        end
-    end   
-    return
-end
-
-@parallel_indices (i, j) function bounce_back_z!(lb, rb, pop, pop_buf)
-    Nz = size(pop, 3)
-    for q in 1:Q
-        if rb && directions[q][3] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, i, j, Nz - 1]
             @index pop_buf[flipped_dir, i, j, Nz - 1] = flipped_value
         end
-        if lb && directions[q][3] == -1
+    end
+    return
+end
+
+@parallel_indices (i, j) function bounce_back_z_left!(pop, pop_buf)
+    for q in 1:Q
+        if directions[q][3] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
             flipped_value = @index pop[q, i, j, 2]
             @index pop_buf[flipped_dir, i, j, 2] = flipped_value
@@ -473,111 +302,6 @@ end
     for q in 1:Q
         @index temperature_pop[q, i, j, k] = temp_eq(q, velocity[i-1, j-1, k-1], values[i-1, j-1, k-1])
     end
-    return
-end
-
-@views function lb_update_halo!(pop, comm)
-    MPI.Barrier(comm)
-    Nx, Ny, Nz = size(pop)
-    me = MPI.Comm_rank(comm)
-    dims, periods, coords = MPI.Cart_get(comm)
-    
-
-    reqs = Vector{MPI.Request}()
-    recvbuffs = Vector{MPI.Buffer}()
-
-    function valid_neighbour(neighbour_coords)
-        return !(any((neighbour_coords .< 0) .& (periods .== 0)) || any((neighbour_coords .>= dims) .& (periods .== 0)))
-    end
-
-    function boundary_dims(dir, role)
-        if role == :sender
-            if dir[1] == 1
-                xidx = Nx - 1
-            elseif dir[1] == -1
-                xidx = 2
-            else
-                xidx = 2:Nx - 1
-            end
-            if dir[2] == 1
-                yidx = Ny - 1
-            elseif dir[2] == -1
-                yidx = 2
-            else
-                yidx = 2:Ny - 1
-            end
-            if dir[3] == 1
-                zidx = Nz - 1
-            elseif dir[3] == -1
-                zidx = 2
-            else
-                zidx = 2:Nz - 1
-            end
-        elseif role == :receiver
-            if dir[1] == 1
-                xidx = 1
-            elseif dir[1] == -1
-                xidx = Nx
-            else
-                xidx = 2:Nx - 1
-            end
-            if dir[2] == 1
-                yidx = 1
-            elseif dir[2] == -1
-                yidx = Ny
-            else
-                yidx = 2:Ny - 1
-            end
-            if dir[3] == 1
-                zidx = 1
-            elseif dir[3] == -1
-                zidx = Nz
-            else
-                zidx = 2:Nz - 1
-            end
-        else
-            @assert(false)
-        end
-        return xidx, yidx, zidx
-
-    end
-
-    for q in 2:Q # no need to exchange with self
-        dir = directions[q]
-        if valid_neighbour(coords + dir)
-            neighbour = MPI.Cart_rank(comm, coords + dir)
-            xidx, yidx, zidx = boundary_dims(dir, :sender)
-            sendbuff = pop[xidx, yidx, zidx, :]
-
-            sreq = MPI.Isend(sendbuff, comm, dest=neighbour, tag=0)
-            append!(reqs, [sreq])
-        end
-        if valid_neighbour(coords - dir)
-            neighbour = MPI.Cart_rank(comm, coords - dir)
-
-            xidx, yidx, zidx = boundary_dims(dir, :receiver)
-            append!(recvbuffs, [MPI.Buffer(Array{Float64}(undef, size(pop[xidx, yidx, zidx, :])))]) # Array{Float64}(undef, length(xidx), length(yidx), length(zidx), Q)
-
-            rreq = MPI.Irecv!(recvbuffs[end], comm, source=neighbour, tag=0)
-            append!(reqs, [rreq])
-        end
-    end
-
-    MPI.Waitall(MPI.RequestSet(reqs))
-
-    req_idx = 1
-    for q in 2:Q
-        dir = directions[q]
-        if valid_neighbour(coords - dir)
-            xidx, yidx, zidx = boundary_dims(dir, :receiver)
-
-            # TODO make parallel copy
-            pop[xidx, yidx, zidx, :] .= recvbuffs[req_idx].data
-
-            req_idx += 1
-        end
-    end
-    MPI.Barrier(comm)
     return
 end
 
