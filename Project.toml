@@ -18,8 +18,5 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 CUDA = "5.5.2"
-CellArrays = "0.2.2"
-CellArraysIndexing = "0.1.0"
-LinearAlgebra = "1.11.0"
-StaticArrays = "1.9.8"
-Test = "1.11.0"
+ImplicitGlobalGrid = "^0.16.0"
+
