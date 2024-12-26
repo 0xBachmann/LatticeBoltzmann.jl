@@ -8,7 +8,7 @@ using Plots
 using ParallelStencil
 using ProgressBars
 
-const USE_GPU = false
+const USE_GPU = true
 
 @static if USE_GPU
     @init_parallel_stencil(CUDA, Float64, 3, inbounds=true)
@@ -34,8 +34,8 @@ function save_array(Aname, A)
 end
 
 function lb()
-    nx_pop = 40
-    ny_pop = nx_pop
+    nx_pop = 350
+    ny_pop = Int(nx_pop/2)
     nz_pop = nx_pop
 
     nx_values = nx_pop - 2
@@ -134,8 +134,8 @@ function lb()
             t_tic = Base.time()
         end
         if do_vis && (i % nvis == 0)
-            gather!(density, density_v)
-            gather!(temperature, temperature_v)
+            # gather!(density, density_v)
+            # gather!(temperature, temperature_v)
             # vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2))])
             # for i in axes(vel_c, 1)
             #     for j in axes(vel_c, 2)
@@ -151,16 +151,16 @@ function lb()
             # gather!(vely_p, vely_p_g)
 
             if me == 0
-                dens = heatmap(xi_g, yi_g, Array(density_v[:, :, Int(ceil(nz_values/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                dens = heatmap(xi_g, yi_g, Array(density[:, :, Int(ceil(nz_values/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
                 # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
-                temp = heatmap(xi_g, yi_g, Array(temperature_v[:, :, Int(ceil(nz_values/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(-ΔT/2,ΔT/2), title="temperature")
+                temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil(nz_values/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(-ΔT/2,ΔT/2), title="temperature")
                 # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
 
                 p = plot(dens, temp, layout=(2, 1))
                 png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
-                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(density_v)))
-                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(temperature_v)))
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(density)))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(temperature)))
             end
         end
 
@@ -168,24 +168,25 @@ function lb()
         @parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
         # @parallel range_values apply_external_force!(velocity, boundary)
 
-        @hide_communication (8, 2) begin
-            @parallel inner_range_pop collision_density!(density_pop, velocity, density, forces, _τ_density)
-            @parallel inner_range_pop collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
-
+        @hide_communication (8, 8, 4) computation_calls=1 begin
+            # @parallel collision_density!(density_pop, velocity, density, forces, _τ_density)
+            # @parallel collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
+            @parallel collision(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density, _τ_temperature)
             update_halo!(density_pop, temperature_pop)
         end
 
-        @parallel inner_range_pop streaming!(density_pop, density_pop_buf)
-        @parallel inner_range_pop streaming!(temperature_pop, temperature_pop_buf)
+        # @parallel inner_range_pop streaming!(density_pop, density_pop_buf)
+        # @parallel inner_range_pop streaming!(temperature_pop, temperature_pop_buf)
+        @parallel inner_range_pop streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
 
 
         if left_boundary_x 
             @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(density_pop, density_pop_buf)
-            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(temperature_pop, temperature_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(temperature_pop, temperature_pop_buf)
         end
 
         if right_boundary_x
-            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(density_pop, density_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(density_pop, density_pop_buf)
             @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(temperature_pop, temperature_pop_buf)
         end
 
@@ -210,7 +211,6 @@ function lb()
             @parallel (x_boundary_range, z_boundary_range) bounce_back_y_right!(density_pop, density_pop_buf)
             # @parallel (x_boundary_range, z_boundary_range) bounce_back_y!(temperature_pop, temperature_pop_buf)
             @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_right!(temperature_pop, temperature_pop_buf, velocity, temperature, ΔT/2)
-    
         end
 
 
@@ -224,7 +224,7 @@ function lb()
     end
 
     t_toc = Base.time() - t_tic
-    A_eff = (
+    A_eff = 2 * (
         4 * 19 + # pop and buff for density and temperature
         2 * 3 + # velocity and forces
         2 # density and temperature

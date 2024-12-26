@@ -49,18 +49,33 @@ end
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
 
+@parallel_indices (i, j, k) function collision(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density, _τ_temperature)
+    if (1 < i && i < size(density_pop, 1)) && (1 < j && j < size(density_pop, 2)) && (1 < k && k < size(density_pop, 3))
+        v = velocity[i-1, j-1, k-1]
+        for q in 1:Q
+            @index density_pop[q, i, j, k] = (1. - _τ_density) * @index(density_pop[q, i, j, k]) + _τ_density * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, forces[i-1, j-1, k-1], _τ_density)
+            @index temperature_pop[q, i, j, k] = (1. - _τ_temperature) * @index(temperature_pop[q, i, j, k]) + _τ_temperature * temp_eq(q, v, temperature[i-1, j-1, k-1])
+        end
+    end
+    return
+end
+
 @parallel_indices (i, j, k) function collision_density!(pop, velocity, density, forces, _τ)
-    v = velocity[i-1, j-1, k-1]
-    for q in 1:Q
-        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, forces[i-1, j-1, k-1], _τ)
+    if (1 < i && i < size(pop, 1)) && (1 < j && j < size(pop, 2)) && (1 < k && k < size(pop, 3))
+        v = velocity[i-1, j-1, k-1]
+        for q in 1:Q
+            @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, forces[i-1, j-1, k-1], _τ)
+        end
     end
     return
 end
 
 @parallel_indices (i, j, k) function collision_temperature!(pop, velocity, temperature, _τ)
-    v = velocity[i-1, j-1, k-1]
-    for q in 1:Q
-        @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * temp_eq(q, v, temperature[i-1, j-1, k-1])
+    if (1 < i && i < size(pop, 1)) && (1 < j && j < size(pop, 2)) && (1 < k && k < size(pop, 3))
+        v = velocity[i-1, j-1, k-1]
+        for q in 1:Q
+            @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * temp_eq(q, v, temperature[i-1, j-1, k-1])
+        end
     end
     return
 end
@@ -222,6 +237,20 @@ end
     return
 end
 
+@parallel_indices (i, j, k) function streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
+    for q in 1:Q
+        @index density_pop_buf[q, i, j, k] = @index density_pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
+        @index temperature_pop_buf[q, i, j, k] = @index temperature_pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
+    end
+    return
+end
+
+@parallel_indices (i, j, k) function streaming!(pop, pop_buf)
+    for q in 1:Q
+        @index pop_buf[q, i, j, k] = @index pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
+    end
+    return
+end
 
 @parallel_indices (i, j, k) function streaming!(pop, pop_buf)
     for q in 1:Q
