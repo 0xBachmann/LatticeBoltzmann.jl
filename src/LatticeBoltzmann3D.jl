@@ -49,36 +49,17 @@ end
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
 
-@parallel_indices (i, j, k) function collision(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density, _τ_temperature)
+@parallel_indices (i, j, k) function collision(density_pop, temperature_pop, velocity, density, temperature, gravity, _τ_density, _τ_temperature)
     if (1 < i && i < size(density_pop, 1)) && (1 < j && j < size(density_pop, 2)) && (1 < k && k < size(density_pop, 3))
         v = velocity[i-1, j-1, k-1]
         for q in 1:Q
-            @index density_pop[q, i, j, k] = (1. - _τ_density) * @index(density_pop[q, i, j, k]) + _τ_density * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, forces[i-1, j-1, k-1], _τ_density)
+            @index density_pop[q, i, j, k] = (1. - _τ_density) * @index(density_pop[q, i, j, k]) + _τ_density * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, -gravity * temperature[i-1, j-1, k-1], _τ_density)
             @index temperature_pop[q, i, j, k] = (1. - _τ_temperature) * @index(temperature_pop[q, i, j, k]) + _τ_temperature * temp_eq(q, v, temperature[i-1, j-1, k-1])
         end
     end
     return
 end
 
-@parallel_indices (i, j, k) function collision_density!(pop, velocity, density, forces, _τ)
-    if (1 < i && i < size(pop, 1)) && (1 < j && j < size(pop, 2)) && (1 < k && k < size(pop, 3))
-        v = velocity[i-1, j-1, k-1]
-        for q in 1:Q
-            @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * f_eq(q, v, density[i-1, j-1, k-1]) + source_term(q, v, forces[i-1, j-1, k-1], _τ)
-        end
-    end
-    return
-end
-
-@parallel_indices (i, j, k) function collision_temperature!(pop, velocity, temperature, _τ)
-    if (1 < i && i < size(pop, 1)) && (1 < j && j < size(pop, 2)) && (1 < k && k < size(pop, 3))
-        v = velocity[i-1, j-1, k-1]
-        for q in 1:Q
-            @index pop[q, i, j, k] = (1. - _τ) * @index(pop[q, i, j, k]) + _τ * temp_eq(q, v, temperature[i-1, j-1, k-1])
-        end
-    end
-    return
-end
 
 @parallel_indices (i, j) function periodic_boundary_x!(pop)
     Nx = size(pop, 1)
@@ -274,7 +255,7 @@ end
     return
 end
 
-@parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
+@parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop, gravity)
     cell_density = 0.
     cell_velocity = @SVector zeros(3)
     cell_temperature = 0.
@@ -284,7 +265,7 @@ end
         cell_velocity += directions[q] * @index density_pop[q, i + 1, j + 1, k + 1]
     end
 
-    cell_velocity += forces[i, j, k] / 2
+    cell_velocity += -gravity * temperature[i, j, k] / 2
     velocity[i, j, k] = cell_velocity / cell_density
     density[i, j, k] = cell_density
     temperature[i, j, k] = cell_temperature

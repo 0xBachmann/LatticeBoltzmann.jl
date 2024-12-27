@@ -67,6 +67,7 @@ function lb()
     α = 0.0003
     ρ_0 = 1.
     gravity = @SVector [0., -1., 0] # g = g⋆ * Δx/Δt^2
+    αρ_0gravity = α * ρ_0 * gravity
 
     nt = 1000
     startup = Int(nt/10)
@@ -83,7 +84,7 @@ function lb()
 
 
     velocity = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
-    forces = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
+    # forces = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
     density = @ones(nx_values, ny_values, nz_values)
     boundary = @zeros(nx_values, ny_values, nz_values) # Data.Array([((x_g(ix, dx, density) - lx / 2)^2 + (y_g(iy, dy, density) - ly / 3) ^2) < R^2 ? 1. : 0. for ix = 1:nx_values, iy = 1:ny_values, iz = 1:nz_values])
     temperature = Data.Array([ΔT * exp(-(x_g(ix, dx, density) - lx / 2)^2
@@ -164,14 +165,12 @@ function lb()
             end
         end
 
-        @parallel range_values compute_force!(forces, temperature, gravity, α, ρ_0)
-        @parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
-        # @parallel range_values apply_external_force!(velocity, boundary)
+        @parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, αρ_0gravity)
 
         @hide_communication (8, 8, 4) computation_calls=1 begin
             # @parallel collision_density!(density_pop, velocity, density, forces, _τ_density)
             # @parallel collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
-            @parallel collision(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density, _τ_temperature)
+            @parallel collision(density_pop, temperature_pop, velocity, density, temperature, αρ_0gravity, _τ_density, _τ_temperature)
             update_halo!(density_pop, temperature_pop)
         end
 
