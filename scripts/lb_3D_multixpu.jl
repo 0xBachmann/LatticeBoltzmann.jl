@@ -8,7 +8,7 @@ using Plots
 using ParallelStencil
 using ProgressBars
 
-const USE_GPU = true
+const USE_GPU = false
 
 @static if USE_GPU
     @init_parallel_stencil(CUDA, Float64, 3, inbounds=true)
@@ -34,7 +34,7 @@ function save_array(Aname, A)
 end
 
 function lb()
-    nx_pop = 350
+    nx_pop = 40
     ny_pop = Int(nx_pop/2)
     nz_pop = nx_pop
 
@@ -93,7 +93,7 @@ function lb()
                                         ) for ix = 1:nx_values, iy = 1:ny_values, iz = 1:nz_values])
 
 
-    do_vis = false
+    do_vis = true
     nvis = 10
     visdir = "visdir"
     st = ceil(Int, nx_values / 20)
@@ -182,9 +182,11 @@ function lb()
         if left_boundary_x 
             @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(density_pop, density_pop_buf)
             @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(temperature_pop, temperature_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(temperature_pop, temperature_pop_buf)
         end
 
         if right_boundary_x
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(density_pop, density_pop_buf)
             @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(density_pop, density_pop_buf)
             @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(temperature_pop, temperature_pop_buf)
         end
@@ -202,14 +204,14 @@ function lb()
         if left_boundary_y
             @parallel (x_boundary_range, z_boundary_range) bounce_back_y_left!(density_pop, density_pop_buf)
             # @parallel (x_boundary_range, z_boundary_range) bounce_back_y!(temperature_pop, temperature_pop_buf)
-            @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_left!(temperature_pop, temperature_pop_buf, velocity, temperature, -ΔT/2)
+            @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_left!(temperature_pop_buf, velocity, temperature, -ΔT/2)
     
         end
          
         if right_boundary_y
             @parallel (x_boundary_range, z_boundary_range) bounce_back_y_right!(density_pop, density_pop_buf)
             # @parallel (x_boundary_range, z_boundary_range) bounce_back_y!(temperature_pop, temperature_pop_buf)
-            @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_right!(temperature_pop, temperature_pop_buf, velocity, temperature, ΔT/2)
+            @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_right!(temperature_pop_buf, velocity, temperature, ΔT/2)
         end
 
 

@@ -49,6 +49,21 @@ end
 const _cs2 = 3. # cs^2 = 1./3. * (dx**2/dt**2)
 const _cs4 = 9.
 
+"""
+    @parallel collision(density_pop, temperature_pop, velocity, density, temperature, gravity, _τ_density, _τ_temperature)
+    
+Applies collision operator to the density and temperature populations.
+
+# Arguments
+- `density_pop::CellArray`: Density population distribution function.
+- `temperature_pop::CellArray`: Temperature population distribution function.
+- `velocity::Array`: Local velocity at each point in the domain.
+- `density::Array`: Local density at each point in the domain.
+- `temperature::Array`: Local temperature at each point in the domain.
+- `gravity::SVector`: Gravitational force vector.
+- `_τ_density::Float64`: Relaxation time for density.
+- `_τ_temperature::Float64`: Relaxation time for temperature.
+"""
 @parallel_indices (i, j, k) function collision(density_pop, temperature_pop, velocity, density, temperature, gravity, _τ_density, _τ_temperature)
     if (1 < i && i < size(density_pop, 1)) && (1 < j && j < size(density_pop, 2)) && (1 < k && k < size(density_pop, 3))
         v = velocity[i-1, j-1, k-1]
@@ -60,28 +75,62 @@ const _cs4 = 9.
     return
 end
 
+"""
+    @parallel (1:ny, 1:nz) periodic_boundary_x!(pop)
 
+Enforces periodic boundary conditions along the x-direction.
+
+# Arguments
+- `pop::{Array, CellArray}`: Population distribution function to be updated.
+"""
 @parallel_indices (i, j) function periodic_boundary_x!(pop)
-    Nx = size(pop, 1)
-    pop[1, i, j] = pop[Nx-1, i, j]
-    pop[Nx, i, j] = pop[2, i, j]
-    return
-end
-@parallel_indices (i, k) function periodic_boundary_y!(pop)
-    Ny = size(pop, 2)
-    pop[i, 1, k] = pop[i, Ny-1, k]
-    pop[i, Ny, k] = pop[i, 2, k]
-    return
-end
-@parallel_indices (i, j) function periodic_boundary_z!(pop)
-    Nz = size(pop, 3)
-    pop[i, j, 1] = pop[i, j, Nz-1]
-    pop[i, j, Nz] = pop[i, j, 2]
+    pop[1, i, j] = pop[end-1, i, j]
+    pop[end, i, j] = pop[2, i, j]
     return
 end
 
-@parallel_indices (j, k) function anti_bounce_back_temperature_x_right!(pop, pop_buf, velocity, values, dirichlet_value) 
-    Nx = size(pop, 1)
+"""
+    @parallel (1:nx, 1:nz) periodic_boundary_y!(pop)
+
+Enforces periodic boundary conditions along the y-direction.
+
+# Arguments
+- `pop::{Array, CellArray}`: Population distribution function to be updated.
+"""
+@parallel_indices (i, k) function periodic_boundary_y!(pop)
+    pop[i, 1, k] = pop[i, end-1, k]
+    pop[i, end, k] = pop[i, 2, k]
+    return
+end
+
+"""
+    @parallel (1:nx, 1:ny) periodic_boundary_z!(pop)
+
+Enforces periodic boundary conditions along the z-direction.
+
+# Arguments
+- `pop::{Array, CellArray}`: Population distribution function to be updated.
+"""
+@parallel_indices (i, j) function periodic_boundary_z!(pop)
+    pop[i, j, 1] = pop[i, j, end-1]
+    pop[i, j, end] = pop[i, j, 2]
+    return
+end
+
+
+"""
+    @parallel (2:ny-1, 2:nz-1) anti_bounce_back_temperature_x_right!(pop, pop_buf, velocity, values, dirichlet_value) 
+
+Enforces Dirichlet temperature boundary conditions via the anti-bounce-back method at the right boundary along the x-direction.
+
+# Arguments
+- `pop_buf::CellArray`: Buffer for the updated Temperature population distribution.
+- `velocity::Array`: Local velocity at each point.
+- `values::Array`: Local values of a field (i.e. temperature).
+- `dirichlet_value::Float64`: Dirichlet boundary condition value for temperature.
+"""
+@parallel_indices (j, k) function anti_bounce_back_temperature_x_right!(pop_buf, velocity, values, dirichlet_value) 
+    Nx = size(pop_buf, 1)
     for q in 1:Q
         if directions[q][1] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
@@ -92,7 +141,18 @@ end
     return
 end
 
-@parallel_indices (j, k) function anti_bounce_back_temperature_x_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+"""
+    @parallel (2:ny-1, 2:nz-1) anti_bounce_back_temperature_x_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+
+Enforces Dirichlet temperature boundary conditions via the anti-bounce-back method at the left boundary along the x-direction.
+
+# Arguments
+- `pop_buf::CellArray`: Buffer for the updated Temperature population distribution.
+- `velocity::Array`: Local velocity at each point.
+- `values::Array`: Local values of a field (i.e. temperature).
+- `dirichlet_value::Float64`: Dirichlet boundary condition value for temperature.
+"""
+@parallel_indices (j, k) function anti_bounce_back_temperature_x_left!(pop_buf, velocity, values, dirichlet_value) 
     for q in 1:Q
         if directions[q][1] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
@@ -103,8 +163,19 @@ end
     return
 end
 
-@parallel_indices (i, k) function anti_bounce_back_temperature_y_right!(pop, pop_buf, velocity, values, dirichlet_value) 
-    Ny = size(pop, 2)
+"""
+    @parallel (2:nx-1, 2:nz-1) anti_bounce_back_temperature_y_right!(pop, pop_buf, velocity, values, dirichlet_value) 
+
+Enforces Dirichlet temperature boundary conditions via the anti-bounce-back method at the right boundary along the y-direction.
+
+# Arguments
+- `pop_buf::CellArray`: Buffer for the updated Temperature population distribution.
+- `velocity::Array`: Local velocity at each point.
+- `values::Array`: Local values of a field (i.e. temperature).
+- `dirichlet_value::Float64`: Dirichlet boundary condition value for temperature.
+"""
+@parallel_indices (i, k) function anti_bounce_back_temperature_y_right!(pop_buf, velocity, values, dirichlet_value) 
+    Ny = size(pop_buf, 2)
     for q in 1:Q
         if directions[q][2] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
@@ -115,7 +186,18 @@ end
     return
 end
 
-@parallel_indices (i, k) function anti_bounce_back_temperature_y_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+"""
+    @parallel (2:nx-1, 2:nz-1) anti_bounce_back_temperature_y_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+
+Enforces Dirichlet temperature boundary conditions via the anti-bounce-back method at the left boundary along the y-direction.
+
+# Arguments
+- `pop_buf::CellArray`: Buffer for the updated Temperature population distribution.
+- `velocity::Array`: Local velocity at each point.
+- `values::Array`: Local values of a field (i.e. temperature).
+- `dirichlet_value::Float64`: Dirichlet boundary condition value for temperature.
+"""
+@parallel_indices (i, k) function anti_bounce_back_temperature_y_left!(pop_buf, velocity, values, dirichlet_value) 
     for q in 1:Q
         if directions[q][2] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
@@ -126,8 +208,19 @@ end
     return
 end
 
-@parallel_indices (i, j) function anti_bounce_back_temperature_z_right!(pop, pop_buf, velocity, values, dirichlet_value) 
-    Nz = size(pop, 3)
+"""
+    @parallel (2:nx-1, 2:ny-1) anti_bounce_back_temperature_z_right!(pop, pop_buf, velocity, values, dirichlet_value) 
+
+Enforces Dirichlet temperature boundary conditions via the anti-bounce-back method at the right boundary along the z-direction.
+
+# Arguments
+- `pop_buf::CellArray`: Buffer for the updated Temperature population distribution.
+- `velocity::Array`: Local velocity at each point.
+- `values::Array`: Local values of a field (i.e. temperature).
+- `dirichlet_value::Float64`: Dirichlet boundary condition value for temperature.
+"""
+@parallel_indices (i, j) function anti_bounce_back_temperature_z_right!(pop_buf, velocity, values, dirichlet_value) 
+    Nz = size(pop_buf, 3)
     for q in 1:Q
         if directions[q][3] == 1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
@@ -138,7 +231,18 @@ end
     return
 end
 
-@parallel_indices (i, j) function anti_bounce_back_temperature_z_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+"""
+    @parallel (2:nx-1, 2:ny-1) anti_bounce_back_temperature_z_left!(pop, pop_buf, velocity, values, dirichlet_value) 
+
+Enforces Dirichlet temperature boundary conditions via the anti-bounce-back method at the left boundary along the z-direction.
+
+# Arguments
+- `pop_buf::CellArray`: Buffer for the updated Temperature population distribution.
+- `velocity::Array`: Local velocity at each point.
+- `values::Array`: Local values of a field (i.e. temperature).
+- `dirichlet_value::Float64`: Dirichlet boundary condition value for temperature.
+"""
+@parallel_indices (i, j) function anti_bounce_back_temperature_z_left!(pop_buf, velocity, values, dirichlet_value) 
     for q in 1:Q
         if directions[q][3] == -1
             flipped_dir = (q%2 == 0) ? q+1 : q-1
@@ -149,6 +253,15 @@ end
     return
 end
 
+"""
+    @parallel (2:ny-1, 2:nz-1) bounce_back_x_right!(pop, pop_buf)
+
+Enforces No-Slip boundary conditions via the bounce-back method at the right boundary along the x-direction.
+
+# Arguments
+- `pop::CellArray`: Population distribution function.
+- `pop_buf::CellArray`: Buffer for the updated population distribution.
+"""
 @parallel_indices (j, k) function bounce_back_x_right!(pop, pop_buf)
     Nx = size(pop, 1)
     for q in 1:Q
@@ -161,6 +274,15 @@ end
     return
 end
 
+"""
+    @parallel (2:ny-1, 2:nz-1) bounce_back_x_left!(pop, pop_buf)
+
+Enforces No-Slip boundary conditions via the bounce-back method at the left boundary along the x-direction.
+
+# Arguments
+- `pop::CellArray`: Population distribution function.
+- `pop_buf::CellArray`: Buffer for the updated population distribution.
+"""
 @parallel_indices (j, k) function bounce_back_x_left!(pop, pop_buf)
     for q in 1:Q
         if directions[q][1] == -1
@@ -172,6 +294,15 @@ end
     return
 end
 
+"""
+    @parallel (2:nx-1, 2:nz-1) bounce_back_y_right!(pop, pop_buf)
+
+Enforces No-Slip boundary conditions via the bounce-back method at the right boundary along the y-direction.
+
+# Arguments
+- `pop::CellArray`: Population distribution function.
+- `pop_buf::CellArray`: Buffer for the updated population distribution.
+"""
 @parallel_indices (i, k) function bounce_back_y_right!(pop, pop_buf)
     Ny = size(pop, 2)
     for q in 1:Q
@@ -184,6 +315,15 @@ end
     return
 end
 
+"""
+    @parallel (2:nx-1, 2:nz-1) bounce_back_y_left!(pop, pop_buf)
+
+Enforces No-Slip boundary conditions via the bounce-back method at the left boundary along the y-direction.
+
+# Arguments
+- `pop::CellArray`: Population distribution function.
+- `pop_buf::CellArray`: Buffer for the updated population distribution.
+"""
 @parallel_indices (i, k) function bounce_back_y_left!(pop, pop_buf)
     for q in 1:Q
         if directions[q][2] == -1
@@ -195,6 +335,15 @@ end
     return
 end
 
+"""
+    @parallel (2:nx-1, 2:ny-1) bounce_back_z_right!(pop, pop_buf)
+
+Enforces No-Slip boundary conditions via the bounce-back method at the right boundary along the z-direction.
+
+# Arguments
+- `pop::CellArray`: Population distribution function.
+- `pop_buf::CellArray`: Buffer for the updated population distribution.
+"""
 @parallel_indices (i, j) function bounce_back_z_right!(pop, pop_buf)
     Nz = size(pop, 3)
     for q in 1:Q
@@ -207,6 +356,15 @@ end
     return
 end
 
+"""
+    @parallel (2:nx-1, 2:ny-1) bounce_back_z_left!(pop, pop_buf)
+
+Enforces No-Slip boundary conditions via the bounce-back method at the left boundary along the z-direction.
+
+# Arguments
+- `pop::CellArray`: Population distribution function.
+- `pop_buf::CellArray`: Buffer for the updated population distribution.
+"""
 @parallel_indices (i, j) function bounce_back_z_left!(pop, pop_buf)
     for q in 1:Q
         if directions[q][3] == -1
@@ -218,24 +376,21 @@ end
     return
 end
 
+"""
+    @parallel (2:nx-1, 2:ny-1, 2_nz-1) streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
+
+Performs streaming for density and temperature populations.
+
+# Arguments
+- `density_pop::CellArray`: Density population distribution function.
+- `density_pop_buf::CellArray`: Buffer for the updated density population.
+- `temperature_pop::CellArray`: Temperature population distribution function.
+- `temperature_pop_buf::CellArray`: Buffer for the updated temperature population.
+"""
 @parallel_indices (i, j, k) function streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
     for q in 1:Q
         @index density_pop_buf[q, i, j, k] = @index density_pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
         @index temperature_pop_buf[q, i, j, k] = @index temperature_pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
-    end
-    return
-end
-
-@parallel_indices (i, j, k) function streaming!(pop, pop_buf)
-    for q in 1:Q
-        @index pop_buf[q, i, j, k] = @index pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
-    end
-    return
-end
-
-@parallel_indices (i, j, k) function streaming!(pop, pop_buf)
-    for q in 1:Q
-        @index pop_buf[q, i, j, k] = @index pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
     end
     return
 end
@@ -255,6 +410,18 @@ end
     return
 end
 
+"""
+    @parallel (1:nx, 1:ny, 1:nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop, gravity)
+Updates the macroscopic moments (velocity, density, temperature).
+
+# Arguments
+- `velocity::CellArray`: Velocity field to be updated.
+- `density::Array`: Density field to be updated.
+- `temperature::Array`: Temperature field to be updated.
+- `density_pop::CellArray`: Density population distribution function.
+- `temperature_pop::CellArray`: Temperature population distribution function.
+- `gravity::SVector`: Gravitational force vector (Scaled by αρ_0).
+"""
 @parallel_indices (i, j, k) function update_moments!(velocity, density, temperature, density_pop, temperature_pop, gravity)
     cell_density = 0.
     cell_velocity = @SVector zeros(3)
@@ -279,6 +446,22 @@ end
     return
 end
 
+"""
+    f_eq(q, velocity, density)
+Computes the equilibrium distribution function for density.
+
+# Arguments
+- `q::Int`: Index of the discrete velocity direction.
+- `velocity::SVector`: Local velocity at the given point.
+- `density::Float64`: Local density at the given point.
+
+# Returns
+- `Float64`: The equilibrium distribution function for density.
+
+The function is based on the discrete velocity directions and weights, incorporating 
+macroscopic variables density and velocity. It includes second-order terms to
+enhance accuracy.
+"""
 @inline function f_eq(q, velocity, density)
     uc = dot(velocity, directions[q])
     uc2 = uc^2
@@ -286,12 +469,41 @@ end
     return weights[q] * density * (1. + uc * _cs2 + 0.5 * uc2 * _cs4 - 0.5 * u2 * _cs2)
 end
 
+"""
+    source_term(q, velocity, force, _τ) 
+Computes the source term originating from external forces.
+
+# Arguments
+- `q::Int`: Index of the discrete velocity direction.
+- `velocity::SVector`: Local velocity at the given point.
+- `force::SVector`: External force vector acting on the fluid.
+- `_τ::Float64`: Relaxation time for the collision operator.
+
+# Returns
+- `Float64`: The source term for the given velocity direction.
+
+The source term accounts for the influence of external forces on the population distribution function (e.g. from buoyancy).
+"""
 @inline function source_term(q, velocity, force, _τ)
     cf = dot(directions[q], force)
     return (1. - _τ / 2) * weights[q] * (cf * _cs2 + cf * dot(directions[q], velocity) * _cs4 - dot(velocity, force) * _cs2)
 end
 
+"""
+    temp_eq(q, velocity, temperature)
+Computes the equilibrium distribution function for temperature.
 
+# Arguments
+- `q::Int`: Index of the discrete velocity direction.
+- `velocity::SVector`: Local velocity at the given point.
+- `temperature::Float64`: Local temperature at the given point.
+
+# Returns
+- `Float64`: The equilibrium distribution function for temperature.
+
+This function is similar to the equilibrium distribution for density but applies to the 
+temperature field, with adjustments for temperature-dependent variables (second order term not strictly necessary).
+"""
 @inline function temp_eq(q, velocity, temperature)
     uc = dot(velocity, directions[q])
     uc2 = uc^2
