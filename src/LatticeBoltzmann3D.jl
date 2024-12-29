@@ -3,6 +3,12 @@ using ParallelStencil
 using ImplicitGlobalGrid
 import MPI
 
+using Plots
+using ParallelStencil
+using LinearAlgebra
+using ProgressBars
+
+
 @static if method == :D3Q15
     const Q = 15
     const directions = SA[
@@ -395,13 +401,7 @@ Performs streaming for density and temperature populations.
     return
 end
 
-@parallel_indices (i, j, k) function init!(left_boundary, right_boundary, velocity, temperature, boundary, U_init, ΔT)    
-    # if boundary[i, j, k] == 0.
-    #     velocity[i, j, k] = U_init
-    # else 
-    #     temperature[i, j, k] = 1.
-    # end
-
+@parallel_indices (i, j, k) function init!(left_boundary, right_boundary, temperature, ΔT)    
     if left_boundary && j == 1
         temperature[i, j, k] = ΔT / 2
     elseif right_boundary && j == size(temperature, 2)
@@ -453,10 +453,10 @@ Computes the equilibrium distribution function for density.
 # Arguments
 - `q::Int`: Index of the discrete velocity direction.
 - `velocity::SVector`: Local velocity at the given point.
-- `density::Float64`: Local density at the given point.
+- `density::Float`: Local density at the given point.
 
 # Returns
-- `Float64`: The equilibrium distribution function for density.
+- `Float`: The equilibrium distribution function for density.
 
 The function is based on the discrete velocity directions and weights, incorporating 
 macroscopic variables density and velocity. It includes second-order terms to
@@ -477,10 +477,10 @@ Computes the source term originating from external forces.
 - `q::Int`: Index of the discrete velocity direction.
 - `velocity::SVector`: Local velocity at the given point.
 - `force::SVector`: External force vector acting on the fluid.
-- `_τ::Float64`: Relaxation time for the collision operator.
+- `_τ::Float`: Relaxation time for the collision operator.
 
 # Returns
-- `Float64`: The source term for the given velocity direction.
+- `Float`: The source term for the given velocity direction.
 
 The source term accounts for the influence of external forces on the population distribution function (e.g. from buoyancy).
 """
@@ -496,10 +496,10 @@ Computes the equilibrium distribution function for temperature.
 # Arguments
 - `q::Int`: Index of the discrete velocity direction.
 - `velocity::SVector`: Local velocity at the given point.
-- `temperature::Float64`: Local temperature at the given point.
+- `temperature::Float`: Local temperature at the given point.
 
 # Returns
-- `Float64`: The equilibrium distribution function for temperature.
+- `Float`: The equilibrium distribution function for temperature.
 
 This function is similar to the equilibrium distribution for density but applies to the 
 temperature field, with adjustments for temperature-dependent variables (second order term not strictly necessary).
@@ -530,4 +530,267 @@ end
 @parallel_indices (i, j, k) function compute_force!(forces, temperature, gravity, α, ρ_0)
     forces[i, j, k] = -α * ρ_0 * temperature[i, j, k] .* gravity
     return
+end
+
+"""
+    save_array(Aname, A)
+
+Write an array `A` in binary format to disc. Resulting file is called `Aname` with suffix `".bin"`.  
+"""
+function save_array(Aname, A)
+    fname = string(Aname, ".bin")
+    out = open(fname, "w")
+    write(out, A)
+    close(out)
+end
+
+"""
+    thermal_convection_lbm_3D(;N=40, nt=1000, Ra=100, do_vis=true)
+Simulates 3D thermal convection using the Lattice Boltzmann Method (LBM).
+
+# Keyword Arguments
+- `N::Int`: Number of grid points in the largest dimension (default: 40).
+- `nt::Int`: Number of timesteps for the simulation (default: 1000).
+- `Ra::Float64`: Rayleigh number, determining the buoyancy-driven flow (default: 100).
+- `do_vis::Bool`: Flag to enable or disable visualization during simulation (default: true).
+- `manage_MPI::Bool`: Flag to enable or disable IGG's managing of MPI, allows multiple calls withour re-initializing MPI (default: true).
+
+# Description
+This function performs a 3D thermal convection simulation using the LBM. The simulation 
+is characterized by a rectangular domain and includes computation of density, temperature, 
+and velocity fields. 
+
+If `do_vis` is enabled, it generates visualizations of the temperature and density fields at 
+specified intervals and creates an animation.
+
+# Example
+```julia
+thermal_convection_lbm_3D(N=50, nt=2000, Ra=500, do_vis=true)
+```
+
+This example simulates a domain with a grid size of 50x25x50 for 2000 timesteps, using a Rayleigh 
+number of 500, with visualization enabled.
+"""    
+function thermal_convection_lbm_3D(;N=40, nt=10000, Ra=1000., do_vis=true, manage_MPI=true)
+    # numerics
+    nx_pop = N
+    ny_pop = Int(nx_pop/2)
+    nz_pop = nx_pop
+
+    nx_values = nx_pop - 2
+    ny_values = ny_pop - 2
+    nz_values = nz_pop - 2
+
+    me, dims, nprocs, coords, comm = init_global_grid(nx_pop, ny_pop, nz_pop, periodx=0, periody=0, periodz=0, init_MPI=manage_MPI)
+    b_width = (8, 8, 8)
+
+    # physics
+    lx = 20
+    ly = lx * ny_pop / nx_pop
+    lz = lx * ny_pop / nx_pop
+    dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()    
+
+    α = 0.0003 #6.9e-5
+    ρ_0 = 1.
+    gravity = @SVector [0., -1., 0]
+    αρ_0gravity = α * ρ_0 * gravity
+    ΔT = 1. #200.
+
+    ν = 5e-2 # viscosity close to 0 -> near incompressible limit
+    # Ra = α * norm(gravity) * ΔT * ly^3 / (viscosity * k)
+    κ = α * norm(gravity) * ΔT * ly^3 / (ν * Ra)
+    @show(κ)
+
+    # _τ_temperature = 1. / (κ * _cs2 + 0.5)
+    # _τ_density = 1. / (ν * _cs2 + 0.5)
+
+    dt = dx / 10 # to regulate velocity
+
+    # lattice units
+    ρ_lattice = 1.
+    dx_lattice = 1.
+    dt_lattice = 1.
+
+    gravity_lattice = gravity .* dt^2 ./ dx
+    α_lattice = α * ΔT
+    αρ_0gravity_lattice = α_lattice * ρ_0 / ρ_lattice * gravity_lattice
+
+    ΔT_lattice = 1.
+    H_lattice = ly / dx
+    κ_lattice = κ * dt / dx^2
+    ν_lattice = ν * dt / dx^2
+
+    _τ_temperature_lattice = 1. / (κ_lattice * _cs2 + 0.5)
+    _τ_density_lattice = 1. / (ν_lattice * _cs2 + 0.5)
+
+    @show(ν_lattice, κ_lattice)
+    @show(1/_τ_density_lattice, 1/_τ_temperature_lattice)
+    @show(α_lattice * norm(gravity_lattice) * ΔT_lattice * H_lattice^3 / (ν_lattice * κ_lattice))
+    
+    # timing
+    startup = Int(nt/10)
+    t_tic = 0.
+    timesteps = 0:nt
+    
+    # init
+    density_pop = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
+    density_pop_buf = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
+    
+    temperature_pop = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
+    temperature_pop_buf = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
+    
+    velocity = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
+    density = @ones(nx_values, ny_values, nz_values)
+    temperature = Data.Array([ΔT_lattice * exp(
+                                            -(x_g(ix, dx, density) - lx / 2)^2
+                                            -(y_g(iy, dy, density) - ly / 2)^2
+                                            -(z_g(iz, dz, density) - lz / 2)^2
+                                            ) for ix = 1:nx_values, iy = 1:ny_values, iz = 1:nz_values])
+
+    # visualization
+    nvis = 10
+    visdir = "visdir"
+    st = ceil(Int, nx_values / 20)
+
+    # boundary and ranges
+    inner_range_pop = (2:nx_pop-1, 2:ny_pop-1, 2:nz_pop-1)
+    range_values = (1:nx_values, 1:ny_values, 1:nz_values)
+    x_boundary_range = 2:nx_pop-1
+    y_boundary_range = 2:ny_pop-1
+    z_boundary_range = 2:nz_pop-1
+    
+    left_boundary_x = coords[1] == 0
+    right_boundary_x = coords[1] == dims[1]-1
+    left_boundary_y = coords[2] == 0
+    right_boundary_y = coords[2] == dims[2]-1
+    left_boundary_z = coords[3] == 0
+    right_boundary_z = coords[3] == dims[3]-1
+    if left_boundary_y || right_boundary_y
+        @parallel range_values init!(left_boundary_y, right_boundary_y, temperature, ΔT_lattice)
+    end
+    
+    @parallel inner_range_pop init_density_pop!(density_pop, velocity, density)
+    @parallel inner_range_pop init_temperature_pop!(temperature_pop, velocity, temperature)
+
+    if do_vis
+        ENV["GKSwstype"]="nul"
+        if (me==0) if isdir("$visdir")==false mkdir("$visdir") end; loadpath="$visdir/"; anim=Animation(loadpath,String[]); println("Animation directory: $(anim.dir)") end
+        nx_v, ny_v, nz_v = (nx_values) * dims[1], (ny_values) * dims[2], (nz_values) * dims[3]
+        (2 * nx_v * ny_v * nz_v * sizeof(Data.Number) > 0.8 * Sys.free_memory()) && error("Not enough memory for visualization.")
+        density_v = @zeros(nx_v, ny_v, nz_v) # global array for visu
+        temperature_v = @zeros(nx_v, ny_v, nz_v) # global array for visu
+        xi_g, yi_g = LinRange(0, lx, nx_v), LinRange(0, ly, ny_v) # inner points only
+        iframe = 0
+        Xc, Yc = [x for x in xi_g, _ in yi_g], [y for _ in xi_g, y in yi_g]
+        Xp, Yp = Xc[1:st:end, 1:st:end], Yc[1:st:end, 1:st:end]
+    end
+
+    for i in (me == 0 ? ProgressBar(timesteps) : timesteps)
+        if i == startup
+            t_tic = Base.time()
+        end
+        if do_vis && (i % nvis == 0)
+            # gather!(density, density_v)
+            # gather!(temperature, temperature_v)
+            # vel_c = copy(velocity[:, :, Int(ceil((Nz-2)/2))])
+            # for i in axes(vel_c, 1)
+            #     for j in axes(vel_c, 2)
+            #         vel_c[i, j] /= norm(vel_c[i, j])
+            #     end
+            # end
+
+            # velx_p = Data.Array([@index vel_c[1, i, j] for i in 1:st:Nx for j in 1:st:Ny])
+            # vely_p = Data.Array([@index vel_c[2, i, j] for i in 1:st:Nx for j in 1:st:Ny])
+            # velx_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 1], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 1], 2) * dims[2])
+            # vely_p_g = @zeros(size(vel_c[1:st:end, 1:st:end, 2], 1) * dims[1], size(vel_c[1:st:end, 1:st:end, 2], 2) * dims[2])
+            # gather!(velx_p, velx_p_g)
+            # gather!(vely_p, vely_p_g)
+
+            if me == 0
+                dens = heatmap(xi_g, yi_g, Array(density[:, :, Int(ceil(nz_values/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(0,1), title="density")
+                # dens = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
+
+                temp = heatmap(xi_g, yi_g, Array(temperature[:, :, Int(ceil(nz_values/2))])'; xlims=(xi_g[1], xi_g[end]), ylims=(yi_g[1], yi_g[end]), aspect_ratio=1, c=:turbo, clim=(-ΔT_lattice/2,ΔT_lattice/2), title="temperature")
+                # temp = quiver!(Xp[:], Yp[:]; quiver=(velx_p[:], vely_p[:]), lw=0.5, c=:black)
+
+                p = plot(dens, temp, layout=(2, 1))
+                png(p, "$visdir/$(lpad(iframe += 1, 4, "0")).png")
+                save_array("$visdir/out_dens_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(density)))
+                save_array("$visdir/out_temp_$(lpad(iframe, 4, "0"))", convert.(Float32, Array(temperature)))
+            end
+        end
+
+        @parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, αρ_0gravity_lattice)
+
+        @hide_communication b_width computation_calls=1 begin
+            # @parallel collision_density!(density_pop, velocity, density, forces, _τ_density)
+            # @parallel collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
+            @parallel collision(density_pop, temperature_pop, velocity, density, temperature, αρ_0gravity_lattice, _τ_density_lattice, _τ_temperature_lattice)
+            update_halo!(density_pop, temperature_pop)
+        end
+
+        # @parallel inner_range_pop streaming!(density_pop, density_pop_buf)
+        # @parallel inner_range_pop streaming!(temperature_pop, temperature_pop_buf)
+        @parallel inner_range_pop streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
+
+
+        if left_boundary_x 
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(density_pop, density_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(temperature_pop, temperature_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(temperature_pop, temperature_pop_buf)
+        end
+
+        if right_boundary_x
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(density_pop, density_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(density_pop, density_pop_buf)
+            @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(temperature_pop, temperature_pop_buf)
+        end
+
+        if left_boundary_z
+            @parallel (x_boundary_range, y_boundary_range) bounce_back_z_left!(density_pop, density_pop_buf)
+            @parallel (x_boundary_range, y_boundary_range) bounce_back_z_left!(temperature_pop, temperature_pop_buf)
+        end
+         
+        if right_boundary_z
+            @parallel (x_boundary_range, y_boundary_range) bounce_back_z_right!(density_pop, density_pop_buf)
+            @parallel (x_boundary_range, y_boundary_range) bounce_back_z_right!(temperature_pop, temperature_pop_buf)
+        end
+
+        if left_boundary_y
+            @parallel (x_boundary_range, z_boundary_range) bounce_back_y_left!(density_pop, density_pop_buf)
+            # @parallel (x_boundary_range, z_boundary_range) bounce_back_y!(temperature_pop, temperature_pop_buf)
+            @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_left!(temperature_pop_buf, velocity, temperature, -ΔT_lattice/2)
+    
+        end
+         
+        if right_boundary_y
+            @parallel (x_boundary_range, z_boundary_range) bounce_back_y_right!(density_pop, density_pop_buf)
+            # @parallel (x_boundary_range, z_boundary_range) bounce_back_y!(temperature_pop, temperature_pop_buf)
+            @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_right!(temperature_pop_buf, velocity, temperature, ΔT_lattice/2)
+        end
+
+
+
+        density_pop, density_pop_buf = density_pop_buf, density_pop
+        temperature_pop, temperature_pop_buf = temperature_pop_buf, temperature_pop 
+        
+    end
+    if do_vis && me == 0
+        run(`ffmpeg -i $visdir/%4d.png ../docs/3D_MULTI_XPU.mp4 -y`)
+    end
+
+    t_toc = Base.time() - t_tic
+    A_eff = 2 * (
+        4 * 19 + # pop and buff for density and temperature
+        2 * 3 + # velocity and forces
+        2 # density and temperature
+    )/1e9*nx_pop*ny_pop*nz_pop*sizeof(Float64)  # Effective main memory access per iteration [GB]
+    niter = length(timesteps) - startup
+    t_it = t_toc / niter
+    T_eff = A_eff/t_it 
+    if me == 0
+        println("Time = $t_toc sec, T_eff = $T_eff GB/s (niter = $niter)")
+    end
+
+    finalize_global_grid(finalize_MPI=manage_MPI)
 end
