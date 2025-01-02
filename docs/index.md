@@ -1,4 +1,4 @@
-# LatticeBoltzmann.jl
+# [LatticeBoltzmann.jl](https://github.com/0xBachmann/LatticeBoltzmann.jl)
 
 This project implements a highly parallelized version of the Lattice Boltzmann Method (LBM), designed to simulate fluid dynamics and thermal convection in three-dimensional domains. Leveraging modern multi-core CPUs and GPUs to achieve exceptional performance and scalability is crucial for good performance. Support for both (multi) CPU and GPU is implemented.
 
