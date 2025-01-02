@@ -59,7 +59,7 @@ Thus each point interacts with all of its nearest neighbours. It is also possibl
 
 ### Boundary Conditions
 
-One strength of LBM is its capability to handle complex boundaries. Only in the streaming step boundaries need to be considered and only the directions that are coming out of a wall or outside of the domain are unknown. 
+One strength of LBM is its capability to handle complex boundaries. Only in the streaming step boundaries need to be considered and only the directions that are coming out of a wall or outside of the domain are unknown.
 
 #### Neumann Boundary Conditions
 
@@ -71,7 +71,7 @@ where $\boldsymbol{x}_b$ is a node next to a boundary and $\bar{i}$ is the oppos
 
 #### Dirichlet Boundary Conditions
 
-When we want to enforce a specific value at a boundary, we need to prescribe the values of the incoming directions. An immediate idea would be to just take the equilibrium distribution $f_i^\mathrm{eq}$, however this only achieves limited accuracy. [Zou/He][Zou/He] propose more involved boundary conditions for pressure and velocity boundary conditions, which are very common. 
+When we want to enforce a specific value at a boundary, we need to prescribe the values of the incoming directions. An immediate idea would be to just take the equilibrium distribution $f_i^\mathrm{eq}$, however this only achieves limited accuracy. [Zou/He][Zou/He] propose more involved boundary conditions for pressure and velocity boundary conditions, which are very common.
 Due to its simplicity however, this project uses anti-bounce-back for dirichlet boundary conditions (see [Krueger et al][Krueger et al]). The anti-bounce-back method is very similar in form to the bounce-back
 $$
 f_{\bar{i}}(\boldsymbol{x}_b, t + \Delta t) = -f_i^\star(\boldsymbol{x}_b, t) + 2f_i^\mathrm{eq}(\boldsymbol{x}_w, t + \Delta t),
@@ -85,9 +85,9 @@ where $C_w$ is the to be imposed Dirichlet value.
 ### Thermal LBM
 
 To incorporate temperature into the system can be done straightforward by adding a second population $g_i$ for the energy. This population follows the same steps as $f_i$
-$$
+\[
 g_i(\boldsymbol{x} + \boldsymbol{e}_i\Delta t, t + \Delta t) = g_i(\boldsymbol{x}, t) + \Omega_i.
-$$
+\]
 Then the local temperature can be recovered by 
 $$
 T = \sum_i g_i
@@ -118,9 +118,9 @@ If viscous heating and compression work are relevant, then an additional source 
 
 ## References
 
-\[1\][Qisu Zou, Xiaoyi He; On pressure and velocity boundary conditions for the lattice Boltzmann BGK model. Physics of Fluids 1 June 1997; 9 (6): 1591–1598.][Zou/He]
+\[1\] [Qisu Zou, Xiaoyi He; On pressure and velocity boundary conditions for the lattice Boltzmann BGK model. Physics of Fluids 1 June 1997; 9 (6): 1591–1598.][Zou/He]
 
-\[2\][Krueger, T., Kusumaatmaja, H., Kuzmin, A., Shardt, O., Silva, G., & Viggen, E. M. (2016). The Lattice Boltzmann Method: Principles and Practice. (Graduate Texts in Physics). Springer.][Krueger et al]
+\[2\] [Krueger, T., Kusumaatmaja, H., Kuzmin, A., Shardt, O., Silva, G., & Viggen, E. M. (2016). The Lattice Boltzmann Method: Principles and Practice. (Graduate Texts in Physics). Springer.][Krueger et al]
 
 [Zou/He]: https://doi.org/10.1063/1.869307
 
