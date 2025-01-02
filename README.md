@@ -85,9 +85,11 @@ where $C_w$ is the to be imposed Dirichlet value.
 ### Thermal LBM
 
 To incorporate temperature into the system can be done straightforward by adding a second population $g_i$ for the energy. This population follows the same steps as $f_i$
-\[
+
+```math
 g_i(\boldsymbol{x} + \boldsymbol{e}_i\Delta t, t + \Delta t) = g_i(\boldsymbol{x}, t) + \Omega_i.
-\]
+```
+
 Then the local temperature can be recovered by 
 $$
 T = \sum_i g_i
