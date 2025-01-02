@@ -80,6 +80,7 @@ where $\boldsymbol{x}_b$ is a node next to a boundary and $\bar{i}$ is the oppos
 #### Dirichlet Boundary Conditions
 
 When we want to enforce a specific value at a boundary, we need to prescribe the values of the incoming directions. An immediate idea would be to just take the equilibrium distribution $f_i^\mathrm{eq}$, however this only achieves limited accuracy. [Zou/He][Zou/He] propose more involved boundary conditions for pressure and velocity boundary conditions, which are very common.
+
 Due to its simplicity however, this project uses anti-bounce-back for dirichlet boundary conditions (see [Krueger et al][Krueger et al]). The anti-bounce-back method is very similar in form to the bounce-back
 
 $$
@@ -108,6 +109,10 @@ $$
 T = \sum_i g_i
 $$
 
+The BGK collision operatore is also suitable for temperature. But now there are two relaxation times, $\tau_f$ and $\tau_g$ respectively. The relaxation time for temperature $\tau_g$ influences the thermal diffusivity.
+
+Note that the inclusion of a sencond population requires double the amount of memory. Working with only one population is possible but a lot more complicated and requires lattices with discrete directions of size 2.
+
 #### Boussinesq Approximation
 
 Temperature induced density change will lead to a buoyancy force leading to coupling between temperature and density and thus between populations $f_i$ and $g_i$. Using the *Boussinesq Approximation* the buoyancy force is given by
@@ -116,7 +121,7 @@ $$
 \boldsymbol{F}_b = -\alpha\rho_0(T-T_0)\boldsymbol{g},
 $$
 
-where $\alpha$ is the thermal expansion coefficient of the fluid and $\boldsymbol{g}$ is gravity. To account for this force, we need to make two small adjustments to the LBM procedure.
+where $\alpha$ is the thermal expansion coefficient of the fluid and $\boldsymbol{g}$ is gravity, $T_0$ and $\rho_0$ are reference density and temperature respectively. To account for this force, we need to make two small adjustments to the LBM procedure.
 
 1. Account for force when computing velocity:
    
@@ -131,12 +136,56 @@ where $\alpha$ is the thermal expansion coefficient of the fluid and $\boldsymbo
    $$
 
    and add it to collision of the density population
-   
+
    $$
    f_i^\star(\boldsymbol{x}, t) = f_i(\boldsymbol{x}, t) + \Omega_i + S_i.
    $$
 
+Note that this change holds for any external force.
+
 If viscous heating and compression work are relevant, then an additional source term needs to be added to the temperature population as well (see [Krueger et al]).
+
+For the population $g_i$ the BGK operator is also feasible
+
+### Nondimensionalization
+
+Because in lattice units $\Delta t$ and $\Delta x$ are fixed to $1$, nondimensionalization is a useful tool to beeing able to map problems simulated to real world values. We will denote lattice values with a superscript $\star$. To have a full set of reference units we still need weight and temperature. Choosing $\rho^\star = 1$ and $T^\star = 1$ as reference units completes the set together with $\Delta t = 1$ and $\Delta x = 1$. Now to transform between real world and lattice values one can take a reference value and transform it according to same linear scalar. E.g. the real $\Delta x = \frac{L_x}{N_x}$, where $L_x$ is the domain length in $x$ and $N_x$ is the number of grid points in $x$, thus
+
+$$
+\Delta x = C_m \Delta x^\star,
+$$
+
+where $C_m$ is the scaling factor for length units (*meters*) and as $\Delta x^\star = 1$
+
+$$
+C_m = \frac{\Delta x}{\Delta x^\star} = \frac{L_x}{N_x}.
+$$
+
+Then lattice values can be calculated by multiplying away units. E.g. nondimensionalizing gravity:
+
+$$
+\boldsymbol{g}^\star = \boldsymbol{g}\frac{C_s^2}{C_m},
+$$
+
+where $C_s$ is the scaling factor for time units (*seconds*).
+
+The remaining values can be transformed in a similar manner.
+
+## Rayleigh-Bénard Convection
+
+This project simulates the Rayleigh-Bénard convection. The geometrical setup for the Rayleigh-Bénard convection involves two parallel plates separated by a distance $H$. The bottom plate is kept at a higher temperature than the top plate (Dirichlet temperature boundary conditions) $T_b > T_t$. At the same time, both plates are subject to the no-slip condition for the fluid velocity. In the presence of gravity $g$, the fluid at the bottom plate will heat u, leading to a decrease of its density (if $\alpha>0$) and therefore a buoyancy force. There exists a stationary solution to this problem with zero velocity everywhere. This state is called conductive because heat is only transported from the hot to the cold plate by conduction. However, if the system is perturbed (e.g. by adding small random velocity or temperature fluctuations) and the temperature gradient is sufficiently large, parts of the heated fluid will move upwards while colder fluid from the top will move down. This will eventually lead to convection. The The physics of the Rayleigh-Bénard convection is governed by the *Rayleigh number*
+
+$$
+\mathrm{Ra} = \frac{\alpha|\boldsymbol{g}|(T_b - T_t) H^3}{\kappa\nu},
+$$
+
+where $\kappa$ and $\nu$ are thermal diffusivity and kinematic viscosity of the fluid, respectively. For low values of the Rayleigh number ($\mathrm{Ra} \lesssim 1000$) the perturbations are dissipated by viscosity. If $\mathrm{Ra}$ becomes larger, bouyancy can overcome dissipation, and convection sets in.
+
+As $\mathrm{Ra}$ is a nondimensional number, its lattice counterpart is the same ($\mathrm{Ra} = \mathrm{Ra}^\star$).
+
+## Implementation
+
+
 
 ## References
 
