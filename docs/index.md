@@ -185,7 +185,89 @@ As $\mathrm{Ra}$ is a nondimensional number, its lattice counterpart is the same
 
 ## Implementation
 
+The framework [`ParallelStencil.jl`](https://github.com/omlins/ParallelStencil.jl) is used to allow for parallelization on either CPU or GPU. Furthermore [`ImplicitGlobalGrid.jl`](https://github.com/eth-cscs/ImplicitGlobalGrid.jl) seamingle interoperate with it to allow for multi CPU/XPU distribution.
 
+To work conveniently with the Q direction of the populations [`CellArrays.jl`](https://github.com/omlins/CellArrays.jl) are used. This allows to create the population vectors as follows
+
+```julia
+population = @zeros(nx, ny, nz, celldims=Q)
+```
+
+# TODO one iteration lbm (limit dt for velocity cap), only simulating relative temperature difference
+
+Because sometimes a single entry of the cell needs to be updated (boundary conditions) the [`CellArraysIndexing.jl`](https://github.com/albert-de-montserrat/CellArraysIndexing.jl) wrapper of `CellArrays.jl` is used. With this its possible to update a direction `iq` as follows
+
+```julia
+@index population[iq, ix, iy, iz] = new_value
+```
+
+The project implements thermal flow in 3D. The lattices D3Q15, D3Q19 and D3Q27 are supporded. Before including `LatticeBoltzmann3D.jl` define global variable `method` to either `:D3Q15`, `:D3Q19` or `:D3Q27` to get the respective lattice. The speed of sound in each lattice is $c_s=\sqrt{3}$.
+
+Bounce-back and anti-bounce-back boundary conditions are implemented for the domain borders. Any stairlike walls with no-slip boundary condition could easily be implemented by defining an array containing information of where the solid wall is and then perform bounce back on every cell where the direction vector points into the solid.
+
+The main function is
+
+```julia
+thermal_convection_lbm_3D(; N=40, nt=10000, Ra=1000., do_vis=true, manage_MPI=true)
+```
+
+which simulated the Rayleigh-Bénard convection on an `N * N/2 * N` domain (the plates are separated in $y$ dimension) for `nt` steps with Rayleigh number `Ra`. The flags `do_vis` and `manage_MPI` allow to toggle plotting and initilization/finalization of MPI. The initial perturbation is a 3D Gaussian with higher temerature in the middle of the domain. It sets parameters as below and the thermal diffusivity $\kappa$ is computed form the prescribed Rayleigh number.
+
+```julia
+lx, ly, lz = 20, 10, 20
+
+α       = 0.0003    # thermal expansion
+ρ_0     = 1.        # density
+gravity = @SVector [0., -1., 0.]
+ΔT      = 1.        # temperature difference of the plates
+ν       = 5e-2      # viscosity close to 0 -> near incompressible limit
+```
+
+The respective relaxation times are then computed from kinematic viscosity $\nu$ and thermal diffusivity $\kappa$ es follows (see [Krueger et al])
+
+$$
+\begin{align}
+    \tau_f^\star = \frac{\nu^\star}{(c_s^\star)^2} + 0.5 \\
+    \tau_g^\star = \frac{\kappa^\star}{(c_s^\star)^2} + 0.5
+\end{align}
+$$
+
+Here is a small sample script that simulated with the D3Q19 lattice on CPU
+
+```julia
+using ParallelStencil
+
+@init_parallel_stencil(Threads, Float64, 3, inbounds=true)
+
+const method = :D3Q19
+include("path/to/LatticeBoltzmann3D.jl")
+
+thermal_convection_lbm_3D()
+```
+
+## Results
+
+### Verification of Diffusion vs Convection
+
+The below results are obtained by calling `thermal_convection_lbm_3D(Ra=Ra)` for different values of `Ra` with the D3Q19 lattice. Because of the low viscosity, we are near incompressible regime and thus the density does not change much. As can be seen, with higher Rayleigh number conveciton sets in. However it already sets in at comparatively low Rayleigh number (100). This might be due to errors in nondimensionalizing or wrong computation of $\mathrm{Ra}$. See `scripts/plotting.ipynb` to reproduce.
+
+<div style="text-align: center;">
+    <div style="display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <figure style="flex: 1 1 30%; text-align: center; margin: 10px;">
+            <img src="plots/ra10.png" alt="RA10" style="width: 100%; height: auto;">
+            <figcaption>$\mathrm{Ra}=10$</figcaption>
+        </figure>
+        <figure style="flex: 1 1 30%; text-align: center; margin: 10px;">
+            <img src="plots/ra100.png" alt="RA100" style="width: 100%; height: auto;">
+            <figcaption>$\mathrm{Ra}=100$</figcaption>
+        </figure>
+        <figure style="flex: 1 1 30%; text-align: center; margin: 10px;">
+            <img src="plots/ra1000.png" alt="RA1000" style="width: 100%; height: auto;">
+            <figcaption>$\mathrm{Ra}=1000$</figcaption>
+        </figure>
+    </div>
+    <p style="margin-top: 10px;">Comparison of temperature and density fields for different Rayleigh numbers after $10\,000$ steps.</p>
+</div>
 
 ## References
 

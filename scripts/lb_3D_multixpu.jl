@@ -1,7 +1,3 @@
-using CellArraysIndexing, StaticArrays
-using ImplicitGlobalGrid
-import MPI
-
 using ParallelStencil
 
 const USE_GPU = false
