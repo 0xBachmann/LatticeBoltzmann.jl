@@ -324,7 +324,7 @@ The below results are obtained by simulating the Rayleigh-Bénard convection wit
             <figcaption>$\mathrm{Ra}=1000$</figcaption>
         </figure>
     </div>
-    <p style="margin-top: 10px;">Comparison of Rayleigh-Bénard convection with different Rayleigh numbers during  $10\,000$ steps.</p>
+    <p style="margin-top: 10px;">Comparison of Rayleigh-Bénard convection with different Rayleigh numbers during  $10\,000$ steps. A slice at $z = L_z/2$ is shown.</p>
 </div>
 
 ### Parallel Efficiency
@@ -351,7 +351,7 @@ Volume slice plot on the result of `scripts/lb_3D_multixpu.jl` with `N=200`. See
 
 ### High-Resolution Simulation
 
-High-resolution simulation on Piz Daint over 4 GPU's with local size `N=360`, thus a global size of `738 x 358 x 360` and for `nt=100000` time steps.
+High-resolution simulation on Piz Daint over 4 GPU's with local size `N=360`, thus a global size of `738 x 358 x 360` and for `nt=100000` time steps. A slice at $z = L_z/2$ is shown.
 
 <img src="plots/3D_MULTI_XPU_daint.gif" alt="highres_plot" style="display: block; margin: 0 auto;" />
 
