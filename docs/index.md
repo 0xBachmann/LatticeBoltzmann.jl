@@ -49,17 +49,11 @@ Lattice Boltzmann models can be operated on a number of different lattices, both
 
 #### D2Q9 Direction Vectors and Weights
 
-| Index ($i$) | Direction Vector ($ \boldsymbol{e}_i $) | Weight ($w_i$)   |
-|---------------|-------------------------------------|--------------------|
-| $0$             | $(0, 0)$                             | $ \frac{4}{9} $  |
-| $1$             | $(1, 0)$                             | $ \frac{1}{9} $  |
-| $2$             | $(0, 1)$                             | $ \frac{1}{9} $  |
-| $3$             | $(-1, 0)$                            | $ \frac{1}{9} $  |
-| $4$             | $(0, -1)$                            | $ \frac{1}{9} $  |
-| $5$             | $(1, 1)$                             | $ \frac{1}{36} $ |
-| $6$             | $(-1, 1)$                            | $ \frac{1}{36} $ |
-| $7$             | $(-1, -1)$                           | $ \frac{1}{36} $ |
-| $8$             | $(1, -1)$                            | $ \frac{1}{36} $ |
+| Index ($i$) | Direction Vector ($ \boldsymbol{e}_i $)      | Weight ($w_i$)   |
+|---------------|--------------------------------------------|--------------------|
+| $1$           | $(0, 0)$                                   | $ \frac{4}{9} $  |
+| $2-5$         | $(1, 0)$, $(0, 1)$, $(-1, 0)$, $(0, -1)$   | $ \frac{1}{9} $  |
+| $6-9$         | $(1, 1)$, $(-1, 1)$, $(-1, -1)$, $(1, -1)$ | $ \frac{1}{36} $ |
 
 Thus each point interacts with all of its nearest neighbours. It is also possible to interact with farther neighbours but this project only supports nearest neighbours (i.e. 8 neighbours in 2D and 26 neighbours in 3D).
 
@@ -67,7 +61,7 @@ Thus each point interacts with all of its nearest neighbours. It is also possibl
 
 One strength of LBM is its capability to handle complex boundaries. Only in the streaming step boundaries need to be considered and only the directions that are coming out of a wall or outside of the domain are unknown.
 
-#### Neumann Boundary Conditions
+#### No-Slip Boundary Conditions
 
 The simplest boundary conditions are bounce-back method which simulates no-slip velocity boundary condition, i.e. walls. The working principle of bounce-back boundaries is that populations hitting a rigid wall during propagation are reflected back to where they originally came from. This is captured by the following streaming step in case direction $i$ points into a wall or outside of the boundary
 
@@ -75,7 +69,14 @@ $$
 f_{\bar{i}}(\boldsymbol{x}_b, t + \Delta t) = f_i^\star(\boldsymbol{x}_b, t),
 $$
 
-where $\boldsymbol{x}_b$ is a node next to a boundary and $\bar{i}$ is the opposite direction of $i$, i.e. $\boldsymbol{e}\_{\bar{i}} = -\boldsymbol{e}_i$. Thus the unkonw are taken from within the domain.
+where $\boldsymbol{x}_b$ is a node next to a boundary and $\bar{i}$ is the opposite direction of $i$, i.e. $\boldsymbol{e}\_{\bar{i}} = -\boldsymbol{e}_i$. Thus the unkonw are taken from within the domain. Storing the directions in the same order as in the D2Q9 table above, allows for easy computation of the index of the opposite direction. If $i$ is even add one, otherwise subtract one
+
+$$
+\bar{i} = \begin{cases}
+    i + 1,\quad i \text{ is even},\\
+    i - 1,\quad i \text{ is odd}.\\
+\end{cases}
+$$
 
 #### Dirichlet Boundary Conditions
 
