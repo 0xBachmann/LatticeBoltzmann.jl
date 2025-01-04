@@ -23,6 +23,7 @@ function thermal_convection_testing()
     ny_values = ny_pop - 2
     nz_values = nz_pop - 2
 
+    init_global_grid(nx_pop, ny_pop, nz_pop)
     # physics
     lx = 20
     ly = lx * ny_pop / nx_pop
@@ -73,9 +74,9 @@ function thermal_convection_testing()
     velocity = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
     density = @ones(nx_values, ny_values, nz_values)
     temperature = Data.Array([ΔT_lattice * exp(
-                                            -((ix-0.5) * dx - lx / 2)^2
-                                            -((iy-0.5) * dy - ly / 2)^2
-                                            -((iz-0.5) * dz - lz / 2)^2
+                                            -(x_g(ix, dx, density) - lx / 2)^2
+                                            -(y_g(iy, dy, density) - ly / 2)^2
+                                            -(z_g(iz, dz, density) - lz / 2)^2
                                             ) for ix = 1:nx_values, iy = 1:ny_values, iz = 1:nz_values])
     
     # boundary and ranges
@@ -132,6 +133,7 @@ function thermal_convection_testing()
         # progress bar
         next!(progress)
     end
+    finalize_global_grid()
     return density, temperature
 end
 
