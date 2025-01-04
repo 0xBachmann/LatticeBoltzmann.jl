@@ -96,7 +96,10 @@ function thermal_convection_testing()
         @parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
 
         # collsion
-        @parallel collision!(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density_lattice, _τ_temperature_lattice)
+        @hide_communication (8, 8, 8) begin
+            @parallel collision!(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density_lattice, _τ_temperature_lattice)
+            update_halo!(density_pop, temperature_pop)
+        end
 
         # streaming
         @parallel inner_range_pop streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
@@ -147,8 +150,6 @@ end
     temp_ref = zeros(Float64, Nx, Ny, Nz)
     load_array!("out_test_density", dens_ref)
     load_array!("out_test_temperature", temp_ref)
-    @show(dens - dens_ref)
-    @show(temp - temp_ref)
     @test all(dens .≈ dens_ref)
     @test all(temp .≈ temp_ref)
 end
