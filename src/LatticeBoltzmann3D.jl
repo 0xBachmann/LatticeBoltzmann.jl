@@ -569,7 +569,7 @@ function save_array(Aname, A)
 end
 
 """
-    thermal_convection_lbm_3D(;N=40, nt=10000, Ra=1000., do_vis=true, manage_MPI=true)
+    thermal_convection_lbm_3D(;N=40, nt=10000, Ra=1000., do_vis=true, vis_file="vis.gif", manage_MPI=true)
 Simulates 3D thermal convection using the Lattice Boltzmann Method (LBM).
 
 # Keyword Arguments
@@ -577,6 +577,7 @@ Simulates 3D thermal convection using the Lattice Boltzmann Method (LBM).
 - `nt::Int`: Number of timesteps for the simulation (default: 1000).
 - `Ra::Float64`: Rayleigh number, determining the buoyancy-driven flow (default: 100).
 - `do_vis::Bool`: Flag to enable or disable visualization during simulation (default: true).
+- `vis_file::String`: Filename for the resulting animation if `do_vis` is set (default: "vis.gif").
 - `manage_MPI::Bool`: Flag to enable or disable IGG's managing of MPI, allows multiple calls withour re-initializing MPI (default: true).
 
 # Description
@@ -595,7 +596,7 @@ thermal_convection_lbm_3D(N=50, nt=2000, Ra=500, do_vis=true)
 This example simulates a domain with a grid size of 50x25x50 for 2000 timesteps, using a Rayleigh 
 number of 500, with visualization enabled.
 """    
-function thermal_convection_lbm_3D(; N=40, nt=10000, Ra=1000., do_vis=true, manage_MPI=true)
+function thermal_convection_lbm_3D(; N=40, nt=10000, Ra=1000., do_vis=true, vis_file="vis.gif", manage_MPI=true)
     # numerics
     nx_pop = N
     ny_pop = Int(nx_pop/2)
@@ -673,12 +674,14 @@ function thermal_convection_lbm_3D(; N=40, nt=10000, Ra=1000., do_vis=true, mana
     y_boundary_range = 2:ny_pop-1
     z_boundary_range = 2:nz_pop-1
     
-    left_boundary_x = coords[1] == 0
-    right_boundary_x = coords[1] == dims[1]-1
-    left_boundary_y = coords[2] == 0
-    right_boundary_y = coords[2] == dims[2]-1
-    left_boundary_z = coords[3] == 0
-    right_boundary_z = coords[3] == dims[3]-1
+    # test whether local gird is touching global boundary
+    _, periods, _ = MPI.Cart_get(comm)
+    left_boundary_x = coords[1] == 0 && !periods[0]
+    right_boundary_x = (coords[1] == dims[1]-1) && !periods[1]
+    left_boundary_y = coords[2] == 0 && !periods[0]
+    right_boundary_y = (coords[2] == dims[2]-1) && !periods[2]
+    left_boundary_z = coords[3] == 0 && !periods[0]
+    right_boundary_z = (coords[3] == dims[3]-1) && !periods[3]
     if left_boundary_y || right_boundary_y
         @parallel range_values init!(left_boundary_y, right_boundary_y, temperature, ΔT_lattice)
     end
@@ -784,7 +787,7 @@ function thermal_convection_lbm_3D(; N=40, nt=10000, Ra=1000., do_vis=true, mana
 
     # visualization
     if do_vis && me == 0
-        run(`ffmpeg -i $visdir/%4d.png ../docs/plots/3D_MULTI_XPU.mp4 -y`)
+        run(`ffmpeg -i $visdir/%4d.png ../docs/plots/"$vis_file" -y`)
     end
 
     # effective memory throughput

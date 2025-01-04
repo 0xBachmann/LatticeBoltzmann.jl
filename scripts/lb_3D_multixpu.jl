@@ -1,3 +1,4 @@
+using Pkg; Pkg.activate("$(@__DIR__)/..")
 using ParallelStencil
 
 const USE_GPU = false
@@ -9,8 +10,7 @@ else
 end
 
 const method = :D3Q19
-const dimension = 3
 
 include("../src/LatticeBoltzmann3D.jl")
 
-thermal_convection_lbm_3D()
+thermal_convection_lbm_3D(vis_file="3D_MULTI_XPU.mp4")

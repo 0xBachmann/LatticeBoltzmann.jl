@@ -109,7 +109,11 @@ $$
 T = \sum_i g_i
 $$
 
-The BGK collision operatore is also suitable for temperature. But now there are two relaxation times, $\tau_f$ and $\tau_g$ respectively. The relaxation time for temperature $\tau_g$ influences the thermal diffusivity.
+The BGK collision operatore is also suitable for temperature. But now there are two relaxation times, $\tau_f$ and $\tau_g$ respectively. The relaxation time for temperature $\tau_g$ influences the thermal diffusivity. In comparison to the densitiy population, a more simple equilibrium function is sufficient for the temperature population (see [Krueger et al])
+
+$$
+g_i^\mathrm{eq} = w_i T \left(1+\frac{\boldsymbol{e}_i\cdot\boldsymbol{u}}{c_s^2}\right)
+$$
 
 Note that the inclusion of a sencond population requires double the amount of memory. Working with only one population is possible but a lot more complicated and requires lattices with discrete directions of size 2.
 
@@ -146,6 +150,8 @@ Note that this change holds for any external force.
 If viscous heating and compression work are relevant, then an additional source term needs to be added to the temperature population as well (see [Krueger et al]).
 
 For the population $g_i$ the BGK operator is also feasible
+
+For more simpicity, only the temperature difference is simulated instead of absolute temperature.
 
 ### Nondimensionalization
 
@@ -193,13 +199,24 @@ To work conveniently with the Q direction of the populations [`CellArrays.jl`](h
 population = @zeros(nx, ny, nz, celldims=Q)
 ```
 
-# TODO one iteration lbm (limit dt for velocity cap), only simulating relative temperature difference
-
 Because sometimes a single entry of the cell needs to be updated (boundary conditions) the [`CellArraysIndexing.jl`](https://github.com/albert-de-montserrat/CellArraysIndexing.jl) wrapper of `CellArrays.jl` is used. With this its possible to update a direction `iq` as follows
 
 ```julia
 @index population[iq, ix, iy, iz] = new_value
 ```
+
+Then a kernel looks something like this
+
+```julia
+@parallel_indices (i, j, k) function streaming!(pop, pop_buf)
+    for q in 1:Q
+        @index pop_buf[q, i, j, k] = @index pop[q, i - directions[q][1], j - directions[q][2], k - directions[q][3]]
+    end
+    return
+end
+```
+
+where `directions` is a `StaticArray` of `StaticArray`s containing the lattice direction vectors. Because no standard finite difference stencils are used, all kernels are `@parallel_indices` kernels and operate on all `Q` directions of a given cell.
 
 The project implements thermal flow in 3D. The lattices D3Q15, D3Q19 and D3Q27 are supporded. Before including `LatticeBoltzmann3D.jl` define global variable `method` to either `:D3Q15`, `:D3Q19` or `:D3Q27` to get the respective lattice. The speed of sound in each lattice is $c_s=\sqrt{3}$.
 
@@ -211,7 +228,7 @@ The main function is
 thermal_convection_lbm_3D(; N=40, nt=10000, Ra=1000., do_vis=true, manage_MPI=true)
 ```
 
-which simulated the Rayleigh-Bénard convection on an `N * N/2 * N` domain (the plates are separated in $y$ dimension) for `nt` steps with Rayleigh number `Ra`. The flags `do_vis` and `manage_MPI` allow to toggle plotting and initilization/finalization of MPI. The initial perturbation is a 3D Gaussian with higher temerature in the middle of the domain. It sets parameters as below and the thermal diffusivity $\kappa$ is computed form the prescribed Rayleigh number.
+which simulated the Rayleigh-Bénard convection on an `N * N/2 * N` domain (the plates are separated in $y$ dimension) for `nt` steps with Rayleigh number `Ra`. The flags `do_vis` and `manage_MPI` allow to toggle plotting and initilization/finalization of MPI. For visualization [FFmpeg](https://www.ffmpeg.org/) is required. The initial perturbation is a 3D Gaussian with higher temerature in the middle of the domain. It sets parameters as below and the thermal diffusivity $\kappa$ is computed form the prescribed Rayleigh number.
 
 ```julia
 lx, ly, lz = 20, 10, 20
@@ -222,6 +239,8 @@ gravity = @SVector [0., -1., 0.]
 ΔT      = 1.        # temperature difference of the plates
 ν       = 5e-2      # viscosity close to 0 -> near incompressible limit
 ```
+
+The physical $\Delta x$ is computed as `lx/nx` and the physical time step $\Delta t$ should be chosen such that the maximum lattice velocity does not exceed $0.4$ for stability reasons (see [Krueger et al]). To ensure this, $\Delta t$ can be related to $\Delta x$ as $\boldsymbol{u}^\star = \boldsymbol{u}\frac{\Delta t}{\Delta x}$.
 
 The respective relaxation times are then computed from kinematic viscosity $\nu$ and thermal diffusivity $\kappa$ es follows (see [Krueger et al])
 
@@ -245,35 +264,101 @@ include("path/to/LatticeBoltzmann3D.jl")
 thermal_convection_lbm_3D()
 ```
 
+After initializing the populations with the respective equilibrium distributions, `nt` LBM iterations are performed. One iteration of LBM consits of
+
+1. Computing forces (buoyancy)
+2. Update moments (density, velocity, temperature)
+3. Collsision step
+   1. Halo exchange
+4. Streaming step
+5. Boundary conditions
+
+To allow for multi CPU/GPU implementation, ghost cells are added to the population fields for the halo exchange. Because only the population fields depend on its neighbours, the moments don't need ghost cells and be exchanged. Boundary conditions then are applied to the inner points of the population, overriding grabage values that have been streamed into the domain from the ghost cells. The halo exchange can be hidden behing the collision step to reduce communication overhead. `ImplicitGlobalGrid.jl` provides the macro `@hide_communication` to achieve this. One iteration then looks like this
+
+```julia
+@parallel range_values compute_force!(forces, temperature, gravity, α, ρ_0)
+
+@parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
+
+@hide_communication b_width begin
+    @parallel collision!(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density_lattice, _τ_temperature_lattice)
+    update_halo!(density_pop, temperature_pop)
+end
+
+@parallel inner_range_pop streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
+
+@parallel boundary_conditions(...)
+
+# pointerswap buffers and fields
+```
+
 ## Results
+
+Unless specified, all simulations below use the default parameters of `thermal_convection_lbm_3D`, i.e.
+
+```julia
+N  = 40      # -> nx, ny, nz = 40, 20, 40
+nt = 10000
+Ra = 1000.0
+```
+
+and a single core.
 
 ### Verification of Diffusion vs Convection
 
-The below results are obtained by calling `thermal_convection_lbm_3D(Ra=Ra)` for different values of `Ra` with the D3Q19 lattice. Because of the low viscosity, we are near incompressible regime and thus the density does not change much. As can be seen, with higher Rayleigh number conveciton sets in. However it already sets in at comparatively low Rayleigh number (100). This might be due to errors in nondimensionalizing or wrong computation of $\mathrm{Ra}$. See `scripts/plotting.ipynb` to reproduce.
+The below results are obtained by simulating the Rayleigh-Bénard convection with default parameters but different values of `Ra` with the D3Q19 lattice. Because of the low viscosity, we are near incompressible regime and thus the density does not change much. As can be seen, with higher Rayleigh number conveciton sets in. However it already sets in at comparatively low Rayleigh number (100). This might be due to errors in nondimensionalizing or wrong computation of $\mathrm{Ra}$. See `scripts/plotting.ipynb` to reproduce.
 
 <div style="text-align: center;">
     <div style="display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap;">
         <figure style="flex: 1 1 30%; text-align: center; margin: 10px;">
-            <img src="plots/ra10.png" alt="RA10" style="width: 100%; height: auto;">
+            <img src="plots/ra10.gif" alt="RA10" style="width: 100%; height: auto;">
             <figcaption>$\mathrm{Ra}=10$</figcaption>
         </figure>
         <figure style="flex: 1 1 30%; text-align: center; margin: 10px;">
-            <img src="plots/ra100.png" alt="RA100" style="width: 100%; height: auto;">
+            <img src="plots/ra100.gif" alt="RA100" style="width: 100%; height: auto;">
             <figcaption>$\mathrm{Ra}=100$</figcaption>
         </figure>
         <figure style="flex: 1 1 30%; text-align: center; margin: 10px;">
-            <img src="plots/ra1000.png" alt="RA1000" style="width: 100%; height: auto;">
+            <img src="plots/ra1000.gif" alt="RA1000" style="width: 100%; height: auto;">
             <figcaption>$\mathrm{Ra}=1000$</figcaption>
         </figure>
     </div>
-    <p style="margin-top: 10px;">Comparison of temperature and density fields for different Rayleigh numbers after $10\,000$ steps.</p>
+    <p style="margin-top: 10px;">Comparison of Rayleigh-Bénard convection with different Rayleigh numbers during  $10\,000$ steps.</p>
 </div>
+
+### Parallel Efficiency
+
+To assess the parallel performance, a weak scaling benchmark was performed on Piz Daint. For single core, `N = 360` was used which results in almost $16\mathrm{GiB}$ memory usage, thus the whole GPU. Computing the effective memory access as
+
+$$
+A_{\mathrm{eff}} = 2D_u + 2D_k,
+$$
+
+where $D_u$ is size of the unknown fields, i.e. those who change every iteration and $D_k$ the size of the known fields, results in an effective memory throughput $T_\mathrm{eff} = 292\mathrm{GB/s}$. This is not too high in comparison to $\approx550\mathrm{GB/s}$ advertised maximum throughput of the P100 on Piz Daint. The actuall memory throughput should be a bit higher because different fields are getting used multiple times, i.e. the force field first gets computed in `compute_force!` and then used both in `update_moments!` and `collision`. Nonetheless, the parallel efficiency is quite high as can be seen below. With $64$ cores the code still achieves $95\%$ of the memory throughput of a single core run.
+
+<img src="plots/weak_scaling.png" alt="weak_scaling" style="display: block; margin: 0 auto;" />
+
+### 3D Plots
+
+Contour plot on the result of `scripts/lb_3D_multixpu.jl`. See `scripts/plotting.ipynb` to reproduce.
+
+<img src="plots/3D_MULTI_XPU_surf.gif" alt="highres_plot" style="display: block; margin: 0 auto;" />
+
+Volume slice plot on the result of `scripts/lb_3D_multixpu.jl` with `N=200`. See `scripts/plotting.ipynb` to reproduce.
+
+<img src="plots/3D_MULTI_XPU_slice_200.gif" alt="highres_plot" style="display: block; margin: 0 auto;" />
+
+### High-Resolution Simulation
+
+High-resolution simulation on Piz Daint over 4 GPU's with local size `N=360`, thus a global size of `738 x 358 x 360` and for `nt=100000` time steps.
+
+<img src="plots/3D_MULTI_XPU_daint.gif" alt="highres_plot" style="display: block; margin: 0 auto;" />
 
 ## References
 
-\[1\] [Qisu Zou, Xiaoyi He; On pressure and velocity boundary conditions for the lattice Boltzmann BGK model. Physics of Fluids 1 June 1997; 9 (6): 1591–1598.][Zou/He]
+\[1\] [Krueger, T., Kusumaatmaja, H., Kuzmin, A., Shardt, O., Silva, G., & Viggen, E. M. (2016). The Lattice Boltzmann Method: Principles and Practice. (Graduate Texts in Physics). Springer.][Krueger et al]
 
-\[2\] [Krueger, T., Kusumaatmaja, H., Kuzmin, A., Shardt, O., Silva, G., & Viggen, E. M. (2016). The Lattice Boltzmann Method: Principles and Practice. (Graduate Texts in Physics). Springer.][Krueger et al]
+\[2\] [Qisu Zou, Xiaoyi He; On pressure and velocity boundary conditions for the lattice Boltzmann BGK model. Physics of Fluids 1 June 1997; 9 (6): 1591–1598.][Zou/He]
 
 [Zou/He]: https://doi.org/10.1063/1.869307
 
