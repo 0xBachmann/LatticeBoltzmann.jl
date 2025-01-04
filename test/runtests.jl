@@ -1,10 +1,4 @@
 using Test
-
-using ImplicitGlobalGrid
-import MPI
-
-using LinearAlgebra
-using Plots
 using ParallelStencil
 
 @init_parallel_stencil(Threads, Float64, 3, inbounds=false)
@@ -153,6 +147,8 @@ end
     temp_ref = zeros(Float64, Nx, Ny, Nz)
     load_array!("out_test_density", dens_ref)
     load_array!("out_test_temperature", temp_ref)
+    @show(dens - dens_ref)
+    @show(temp - temp_ref)
     @test all(dens .≈ dens_ref)
     @test all(temp .≈ temp_ref)
 end
