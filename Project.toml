@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CellArrays = "d35fcfd7-7af4-4c67-b1aa-d78070614af4"
 CellArraysIndexing = "6597d73a-e7d2-484e-9044-f54e6a6a1966"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
@@ -20,6 +21,5 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 CUDA = "5.5.2"
-GLMakie = "0.10.16"
 ImplicitGlobalGrid = "^0.16.0"
 ProgressMeter = "1.10.2"

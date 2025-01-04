@@ -13,110 +13,144 @@ const method = :D3Q19
 
 include("../src/LatticeBoltzmann3D.jl")
 
-"""
-    save_array(Aname, A)
+function thermal_convection_testing()
+    # numerics
+    nx_pop = 40
+    ny_pop = Int(nx_pop/2)
+    nz_pop = nx_pop
 
-Write an array `A` in binary format to disc. Resulting file is called `Aname` with suffix `".bin"`.  
-"""
-function save_array(Aname, A)
-    fname = string(Aname, ".bin")
-    out = open(fname, "w")
-    write(out, A)
-    close(out)
-end
+    nx_values = nx_pop - 2
+    ny_values = ny_pop - 2
+    nz_values = nz_pop - 2
 
-@parallel_indices (i, j, k) function init_test!(velocity, temperature, boundary, U_init)    
-    if boundary[i, j, k] == 0.
-        velocity[i, j, k] = U_init
-    else 
-        temperature[i, j, k] = 1.
-    end
-    return
-end
+    # physics
+    lx = 20
+    ly = lx * ny_pop / nx_pop
+    lz = lx * ny_pop / nx_pop
+    dx, dy, dz = lx / nx_values, ly / ny_values, lz / nz_values    
 
-function lb()
-    Nx = 40
-    Ny = 70
-    Nz = 3
+    α = 0.0003 #6.9e-5
+    ρ_0 = 1.
+    gravity = @SVector [0., -1., 0.]
+    αρ_0gravity = α * ρ_0 * gravity
+    ΔT = 1. #200.
 
-    me, dims, nprocs, coords, comm = init_global_grid(Nx, Ny, Nz, periodz=1, periodx=1, periody=1)
+    ν = 5e-2 # viscosity close to 0 -> near incompressible limit
+    # Ra = α * norm(gravity) * ΔT * ly^3 / (viscosity * k)
+    κ = α * norm(gravity) * ΔT * ly^3 / (ν * 1000.)
 
-    lx = 40
-    ly = 70
-    lz = 3
+    dt = dx / 10 # to regulate lattice velocity
 
-    dx, dy, dz = lx / nx_g(), ly / ny_g(), lz / nz_g()
+    # lattice units
+    ρ_lattice = 1.
+    dx_lattice = 1.
+    dt_lattice = 1.
 
-    density_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
-    density_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
+    gravity_lattice = gravity .* dt^2 ./ dx
+    α_lattice = α * ΔT
+    αρ_0gravity_lattice = α_lattice * ρ_0 / ρ_lattice * gravity_lattice
+
+    ΔT_lattice = 1.
+    H_lattice = ly / dx
+    κ_lattice = κ * dt / dx^2
+    ν_lattice = ν * dt / dx^2
+
+    _τ_temperature_lattice = 1. / (κ_lattice * _cs2 + 0.5)
+    _τ_density_lattice = 1. / (ν_lattice * _cs2 + 0.5)
+
+    # timing
+    timesteps = 0:1000
+    progress = Progress(length(timesteps))
     
-    temperature_pop = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
-    temperature_buf = @zeros(Nx + 2, Ny + 2, Nz + 2, celldims=Q)
-
-    D = 1e-2
-    viscosity = 5e-2
-
-    _τ_temperature = 1. / (D * _cs2 + 0.5)
-    _τ_density = 1. / (viscosity * _cs2 + 0.5)
-
-    nt = 1000
-    timesteps = 0:nt
-
-    R = lx / 4
-    U_init = @SVector [0., 0.2, 0.]
-
-    velocity = @zeros(Nx, Ny, Nz, celldims=3)
-    density = @ones(Nx, Ny, Nz)
-    boundary = Data.Array([((x_g(ix, dx, density) - lx / 2)^2 + (y_g(iy, dy, density) - ly / 3) ^2) < R^2 ? 1. : 0. for ix = 1:Nx, iy = 1:Ny, iz = 1:Nz])
-    temperature = @zeros(Nx, Ny, Nz)
-    forces = @zeros(Nx, Ny, Nz, celldims=3)
+    # init
+    density_pop = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
+    density_pop_buf = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
     
-    @parallel (1:Nx, 1:Ny, 1:Nz) init_test!(velocity, temperature, boundary, U_init)
+    temperature_pop = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
+    temperature_pop_buf = @zeros(nx_pop, ny_pop, nz_pop, celldims=Q)
     
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_density_pop!(density_pop, velocity, density)
-    @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) init_temperature_pop!(temperature_pop, velocity, temperature)
+    forces = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
+    velocity = @zeros(nx_values, ny_values, nz_values, celldims=dimension)
+    density = @ones(nx_values, ny_values, nz_values)
+    temperature = Data.Array([ΔT_lattice * exp(
+                                            -((ix-0.5) * dx - lx / 2)^2
+                                            -((iy-0.5) * dy - ly / 2)^2
+                                            -((iz-0.5) * dz - lz / 2)^2
+                                            ) for ix = 1:nx_values, iy = 1:ny_values, iz = 1:nz_values])
     
+    # boundary and ranges
+    inner_range_pop = (2:nx_pop-1, 2:ny_pop-1, 2:nz_pop-1)
+    range_values = (1:nx_values, 1:ny_values, 1:nz_values)
+    x_boundary_range = 2:nx_pop-1
+    y_boundary_range = 2:ny_pop-1
+    z_boundary_range = 2:nz_pop-1
+    
+    @parallel range_values init!(true, true, temperature, ΔT_lattice)
+    
+    # initialize populations from equilibrium distribution
+    @parallel inner_range_pop init_density_pop!(density_pop, velocity, density)
+    @parallel inner_range_pop init_temperature_pop!(temperature_pop, velocity, temperature)
+    
+
+    # time loop
     for _ in timesteps
-        @parallel (1:Nx, 1:Ny, 1:Nz) update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
-        @parallel (1:Nx, 1:Ny, 1:Nz) apply_external_force!(velocity, boundary)
+        # compute forces
+        @parallel range_values compute_force!(forces, temperature, gravity, α, ρ_0)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_density!(density_pop, velocity, density, forces, _τ_density)
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) collision_temperature!(temperature_pop, velocity, temperature, _τ_temperature)
+        # compute moments (density, velocity and temperature)
+        @parallel range_values update_moments!(velocity, density, temperature, density_pop, temperature_pop, forces)
 
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(density_pop)
-        @parallel (1:Nx+2, 1:Ny+2) periodic_boundary_z!(temperature_pop)
-        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(density_pop)
-        @parallel (1:Nx+2, 1:Nz+2) periodic_boundary_y!(temperature_pop)
-        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(density_pop)
-        @parallel (1:Ny+2, 1:Nz+2) periodic_boundary_x!(temperature_pop)
+        # collsion
+        @parallel collision!(density_pop, temperature_pop, velocity, density, temperature, forces, _τ_density_lattice, _τ_temperature_lattice)
 
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(density_pop, density_buf)
-        @parallel (2:Nx+1, 2:Ny+1, 2:Nz+1) streaming!(temperature_pop, temperature_buf)
+        # streaming
+        @parallel inner_range_pop streaming!(density_pop, density_pop_buf, temperature_pop, temperature_pop_buf)
+
+        # boundary conditions
+        @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(density_pop, density_pop_buf)
+        @parallel (y_boundary_range, z_boundary_range) bounce_back_x_left!(temperature_pop, temperature_pop_buf)
+
+        @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(density_pop, density_pop_buf)
+        @parallel (y_boundary_range, z_boundary_range) bounce_back_x_right!(temperature_pop, temperature_pop_buf)
+
+        @parallel (x_boundary_range, y_boundary_range) bounce_back_z_left!(density_pop, density_pop_buf)
+        @parallel (x_boundary_range, y_boundary_range) bounce_back_z_left!(temperature_pop, temperature_pop_buf)
+
+        @parallel (x_boundary_range, y_boundary_range) bounce_back_z_right!(density_pop, density_pop_buf)
+        @parallel (x_boundary_range, y_boundary_range) bounce_back_z_right!(temperature_pop, temperature_pop_buf)
+
+        @parallel (x_boundary_range, z_boundary_range) bounce_back_y_left!(density_pop, density_pop_buf)
+        @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_left!(temperature_pop_buf, velocity, temperature, ΔT_lattice/2)
+
+        @parallel (x_boundary_range, z_boundary_range) bounce_back_y_right!(density_pop, density_pop_buf)
+        @parallel (x_boundary_range, z_boundary_range) anti_bounce_back_temperature_y_right!(temperature_pop_buf, velocity, temperature, -ΔT_lattice/2)
 
         # pointer swap
-        density_pop, density_buf = density_buf, density_pop
-        temperature_pop, temperature_buf = temperature_buf, temperature_pop 
+        density_pop, density_pop_buf = density_pop_buf, density_pop
+        temperature_pop, temperature_pop_buf = temperature_pop_buf, temperature_pop 
+        
+        # progress bar
+        next!(progress)
     end
-    finalize_global_grid()
     return density, temperature
 end
 
-function load_array(Aname, A)
+function load_array!(Aname, A)
     fname = string(Aname, ".bin")
     fid=open(fname, "r"); read!(fid, A); close(fid)
 end
 
 @testset "testing 3D thermal lbm" begin
-    Nx = 40
-    Ny = 70
-    Nz = 3
-    dens, temp = lb()
+    Nx = 38
+    Ny = 18
+    Nz = 38
+    dens, temp = thermal_convection_testing()
     @test all(isfinite, dens)
     @test all(isfinite, temp)
     dens_ref = zeros(Float64, Nx, Ny, Nz)
     temp_ref = zeros(Float64, Nx, Ny, Nz)
-    load_array("out_test_density", dens_ref)
-    load_array("out_test_temperature", temp_ref)
+    load_array!("out_test_density", dens_ref)
+    load_array!("out_test_temperature", temp_ref)
     @test all(dens .≈ dens_ref)
     @test all(temp .≈ temp_ref)
 end
