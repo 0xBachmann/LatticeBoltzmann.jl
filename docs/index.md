@@ -45,15 +45,15 @@ $$
 
 ### DnQm Lattices
 
-Lattice Boltzmann models can be operated on a number of different lattices, both cubic and triangular, and with or without rest particles in the discrete distribution function. A popular way to classify different lattices is with the _DnQm_ scheme. Here Dn stands for n dimension and Qm for m directions. For example, D2Q9 is a two dimensional grid with 9 directions. The direction and weights are given below.
+Lattice Boltzmann models can be operated on a number of different lattices, both cubic and triangular, and with or without rest particles in the discrete distribution function. A popular way to classify different lattices is with the *DnQm* scheme. Here Dn stands for n dimension and Qm for m directions. For example, D2Q9 is a two dimensional grid with 9 directions. The direction and weights are given below.
 
 #### D2Q9 Direction Vectors and Weights
 
 | Index ($i$) | Direction Vector ($ \boldsymbol{e}_i $)      | Weight ($w_i$)   |
 |---------------|--------------------------------------------|--------------------|
 | $1$           | $(0, 0)$                                   | $ \frac{4}{9} $  |
-| $2-5$         | $(1, 0)$, $(0, 1)$, $(-1, 0)$, $(0, -1)$   | $ \frac{1}{9} $  |
-| $6-9$         | $(1, 1)$, $(-1, 1)$, $(-1, -1)$, $(1, -1)$ | $ \frac{1}{36} $ |
+| $2-5$         | $(1, 0)$, $(-1, 0)$, $(0, 1)$, $(0, -1)$   | $ \frac{1}{9} $  |
+| $6-9$         | $(1, 1)$, $(-1, -1)$, $(1, -1)$, $(-1, 1)$ | $ \frac{1}{36} $ |
 
 Thus each point interacts with all of its nearest neighbours. It is also possible to interact with farther neighbours but this project only supports nearest neighbours (i.e. 8 neighbours in 2D and 26 neighbours in 3D).
 
@@ -113,7 +113,7 @@ $$
 The BGK collision operatore is also suitable for temperature. But now there are two relaxation times, $\tau_f$ and $\tau_g$ respectively. The relaxation time for temperature $\tau_g$ influences the thermal diffusivity. In comparison to the densitiy population, a more simple equilibrium function is sufficient for the temperature population (see [Krueger et al])
 
 $$
-g_i^\mathrm{eq} = w_i T \left(1+\frac{\boldsymbol{e}_i\cdot\boldsymbol{u}}{c_s^2}\right)
+g_i^\mathrm{eq} = w_i T \left(1+\frac{\boldsymbol{e}_i\cdot\boldsymbol{u}}{c_s^2}\right).
 $$
 
 Note that the inclusion of a sencond population requires double the amount of memory. Working with only one population is possible but a lot more complicated and requires lattices with discrete directions of size 2.
@@ -126,7 +126,7 @@ $$
 \boldsymbol{F}_b = -\alpha\rho_0(T-T_0)\boldsymbol{g},
 $$
 
-where $\alpha$ is the thermal expansion coefficient of the fluid and $\boldsymbol{g}$ is gravity, $T_0$ and $\rho_0$ are reference density and temperature respectively. To account for this force, we need to make two small adjustments to the LBM procedure.
+where $\alpha$ is the thermal expansion coefficient of the fluid and $\boldsymbol{g}$ is gravity, $T_0$ and $\rho_0$ are reference density and temperature respectively. Note that it is actually a force density. To account for this force, we need to make two small adjustments to the LBM procedure.
 
 1. Account for force when computing velocity:
    
@@ -183,7 +183,7 @@ The remaining values can be transformed in a similar manner.
 This project simulates the Rayleigh-Bénard convection. The geometrical setup for the Rayleigh-Bénard convection involves two parallel plates separated by a distance $H$. The bottom plate is kept at a higher temperature than the top plate (Dirichlet temperature boundary conditions) $T_b > T_t$. At the same time, both plates are subject to the no-slip condition for the fluid velocity. In the presence of gravity $g$, the fluid at the bottom plate will heat u, leading to a decrease of its density (if $\alpha>0$) and therefore a buoyancy force. There exists a stationary solution to this problem with zero velocity everywhere. This state is called conductive because heat is only transported from the hot to the cold plate by conduction. However, if the system is perturbed (e.g. by adding small random velocity or temperature fluctuations) and the temperature gradient is sufficiently large, parts of the heated fluid will move upwards while colder fluid from the top will move down. This will eventually lead to convection. The The physics of the Rayleigh-Bénard convection is governed by the *Rayleigh number*
 
 $$
-\mathrm{Ra} = \frac{\alpha|\boldsymbol{g}|(T_b - T_t) H^3}{\kappa\nu},
+\mathrm{Ra} = \frac{\alpha\lVert\boldsymbol{g}\rVert(T_b - T_t) H^3}{\kappa\nu},
 $$
 
 where $\kappa$ and $\nu$ are thermal diffusivity and kinematic viscosity of the fluid, respectively. For low values of the Rayleigh number ($\mathrm{Ra} \lesssim 1000$) the perturbations are dissipated by viscosity. If $\mathrm{Ra}$ becomes larger, bouyancy can overcome dissipation, and convection sets in.
@@ -354,6 +354,15 @@ Volume slice plot on the result of `scripts/lb_3D_multixpu.jl` with `N=200`. See
 High-resolution simulation on Piz Daint over 4 GPU's with local size `N=360`, thus a global size of `738 x 358 x 360` and for `nt=100000` time steps. A slice at $z = L_z/2$ is shown.
 
 <img src="plots/3D_MULTI_XPU_daint.gif" alt="highres_plot" style="display: block; margin: 0 auto;" />
+
+## Conclusion
+
+The Lattice Boltzmann Method can be used to simulate thermal convection. Using `ParallelStencil.jl` and `ImplicitGlobalGrid.jl`, simulations can be performed in parallel over multiple nodes either on CPU or GPU. Like pseudocompressible methods, the LBM does not involve the Poisson equation which can be difficult to solve due to its non-locality. However LBM requires a ton of memory. For thermal flows two populations are required and each also needs a buffer. Additionally a field for density and temperature and one for velocity and the forces is needed. Thus e.g. for D3Q19 method one needs $11.2\mathrm{GB}$ of memory for a simulation with a resolution of $256^3$.
+
+### Outlook
+
+1. More complex geometries can easily be investigated due to the simplicity of the boundary conditions if staircase like boundaries are acceptable.
+2. A smart traversal order for the streaming step could remove the need for the bufffers, as each value only depends on exactly one neighbour.
 
 ## References
 
